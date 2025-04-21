@@ -1,0 +1,24 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+
+# SQLite DB (only if you don't want to track changes)
+# database/comunication_ltd.db
+
+# VS Code settings
+.vscode/
+
+# Logs
+*.log
+
+# Streamlit cache
+.streamlit/
+
+# Python environment files
+*.egg-info/
