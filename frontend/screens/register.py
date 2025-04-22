@@ -1,9 +1,10 @@
 import streamlit as st
 import requests
 import re
+from screens.login import policy
+
 
 API_URL = "http://backend:8000/register"
-policy = requests.get("http://backend:8000/password-policy").json()
 
 def show():
     st.title("📝 Register New User")

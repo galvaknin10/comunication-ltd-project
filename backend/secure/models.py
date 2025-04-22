@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, DateTime
 from database import Base
+from datetime import datetime
 
 class User(Base):
     __tablename__ = "users"
@@ -11,3 +12,4 @@ class User(Base):
     salt = Column(String, nullable=False)
     failed_attempts = Column(Integer, default=0)
     successful_logins = Column(Integer, default=0)
+    locked_until = Column(DateTime, nullable=True)

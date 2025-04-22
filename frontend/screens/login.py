@@ -1,6 +1,10 @@
 import streamlit as st
 import requests
 
+
+API_URL = "http://backend:8000/login"
+policy = requests.get("http://backend:8000/password-policy").json()
+
 def show():
     st.title("🔐 Comunication LTD")
     st.subheader("Login")
@@ -10,9 +14,25 @@ def show():
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        # TODO: Validate login with backend
-        st.success("Logged in successfully")
-        st.session_state.page = "system"
+        response = requests.post(API_URL, json={
+            "username": username,
+            "password": password
+        })
+
+        if response.status_code == 200:
+            st.success("Login successful!")
+            data = response.json()
+
+            if data.get("force_password_change"):
+                st.session_state.page = "change_password"
+            else:
+                st.session_state.page = "system"
+
+            st.rerun()
+
+        else:
+            st.error(f"Error: {response.json().get('detail')}")
+
 
     st.markdown("---")
 
@@ -20,8 +40,6 @@ def show():
     if st.button("Register"):
         st.session_state.page = "register"
         st.rerun()
-
-
 
     # Forgot password flow
     with st.expander("Forgot Password?"):
