@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from models import User
+from models import User, Customer
 from utils.security import generate_salt, hash_password
 
 def create_user(db: Session, username: str, email: str, password: str):
@@ -10,3 +10,11 @@ def create_user(db: Session, username: str, email: str, password: str):
     db.commit()
     db.refresh(user)
     return user
+
+def create_customer(db: Session, customer_id: int, name: str, email: str, phone: str):
+    customer = Customer(customer_id=customer_id, name=name, email=email, phone=phone)
+    db.add(customer)
+    db.commit()
+    db.refresh(customer)
+    return customer
+

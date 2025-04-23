@@ -1,12 +1,12 @@
 import streamlit as st
 import requests
-
+import time
 
 API_URL = "http://backend:8000/login"
 policy = requests.get("http://backend:8000/password-policy").json()
 
 def show():
-    st.title("🔐 Comunication LTD")
+    st.title("Comunication LTD")
     st.subheader("Login")
 
     # Regular login form
@@ -20,18 +20,24 @@ def show():
         })
 
         if response.status_code == 200:
-            st.success("Login successful!")
             data = response.json()
 
+            st.session_state["username"] = username
+        
             if data.get("force_password_change"):
+                st.info("Moved to pick a new password for your safety")
+                time.sleep(2)
+                st.session_state["password"] = password
                 st.session_state.page = "change_password"
             else:
+                st.success("Login successful!")
+                time.sleep(2)
                 st.session_state.page = "system"
 
             st.rerun()
-
         else:
             st.error(f"Error: {response.json().get('detail')}")
+
 
 
     st.markdown("---")
@@ -41,10 +47,25 @@ def show():
         st.session_state.page = "register"
         st.rerun()
 
-    # Forgot password flow
     with st.expander("Forgot Password?"):
         email = st.text_input("Enter your email to reset password")
         if st.button("Send Reset Link"):
-            # TODO: Call backend to generate SHA-1 token and "send" it
-            st.success("A reset token has been sent to your email.")
-            st.session_state.page = "change_password"
+            if not email:
+                st.warning("Please enter your email.")
+            elif not re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email):
+                st.warning("Enter a valid email (e.g., name@example.com)")
+            else:
+                try:
+                    response = requests.post(f"{API_URL}/request-password-reset", json={"email": email})
+                    if response.status_code == 200:
+                        token = response.json().get("token")
+                        st.success("Reset token generated! (Check your email)")
+                        st.session_state["reset_token"] = token
+                        st.session_state["reset_email"] = email
+                        st.session_state.page = "verify_token"
+                        st.rerun()
+                    else:
+                        st.error(f"Error: {response.json().get('detail')}")
+                except Exception as e:
+                    st.error(f"Something went wrong: {e}")
+

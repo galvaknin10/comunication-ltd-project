@@ -2,13 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from database import get_db
-from crud import create_user
+from crud import create_user, create_customer
 from utils.security import is_password_valid, hash_password
-from config import PASSWORD_COMPLEXITY_REGEX, MIN_PASSWORD_LENGTH, COMMON_PASSWORDS, GUIDLINE_DESCRIPTION, FORCE_PASSWORD_CHANGE_AFTER_LOGINS, MAX_LOGIN_ATTEMPTS
-from models import User
+from config import COMMON_PASSWORDS, PASSWORD_COMPLEXITY_REGEX, MIN_PASSWORD_LENGTH, GUIDLINE_DESCRIPTION, FORCE_PASSWORD_CHANGE_AFTER_LOGINS, MAX_LOGIN_ATTEMPTS
+from models import User, Customer
 import pendulum
-
-
+import hashlib
+import time
 
 
 router = APIRouter()
@@ -22,6 +22,16 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+class CustomerCreate(BaseModel):
+    customer_id: int
+    name: str
+    email: str
+    phone: str 
+
+class ChangePasswordRequest(BaseModel):
+    username: str
+    new_password: str
+
 
 @router.post("/register")
 def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
@@ -30,10 +40,11 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Username already exists")
     
     if request.password in COMMON_PASSWORDS:
-        raise HTTPException(status_code=400, detail="Password is too common")
+        raise HTTPException(status_code=400, detail="Your password is too common. Try picking something more unique and secure.")
 
     if not is_password_valid(request.password):
-        raise HTTPException(status_code=400, detail="Password must include lowercase, uppercase, digit, and special character")
+        raise HTTPException(status_code=400, detail="Password doesn't meet our policy")
+
 
     return create_user(
         db=db,
@@ -98,3 +109,55 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         "message": "Login successful",
         "force_password_change": user.successful_logins >= FORCE_PASSWORD_CHANGE_AFTER_LOGINS
     }
+
+
+@router.post("/customers")
+def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
+    existing_customer = db.query(Customer).filter(Customer.customer_id == request.customer_id).first()
+    if existing_customer:
+        raise HTTPException(status_code=409, detail="Customer already exists")
+
+    return create_customer(
+        db=db,
+        customer_id=request.customer_id,
+        name=request.name,
+        email=request.email,
+        phone=request.phone
+    )
+
+
+@router.post("/change-password")
+def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == request.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if request.new_password in COMMON_PASSWORDS:
+        raise HTTPException(status_code=400, detail="Your password is too common. Try picking something more unique and secure.")
+
+    if not is_password_valid(request.new_password):
+        raise HTTPException(status_code=400, detail="Password doesn't meet our policy")
+
+    user.password_hash = hash_password(request.new_password, user.salt)
+    user.successful_logins = 0 
+    db.commit()
+    return {"message": "Password updated"}
+
+
+@router.post("/request-password-reset")
+def request_password_reset(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    # Generate reset token using SHA-1
+    timestamp = str(time.time())
+    raw_string = f"{email}{timestamp}{user.username}"
+    token = hashlib.sha1(raw_string.encode()).hexdigest()
+
+    # Save token in DB or memory (you choose)
+    user.reset_token = token
+    db.commit()
+
+    # In real-world: send email. Here: return it for now
+    return {"message": "Token generated", "token": token}

@@ -13,3 +13,13 @@ class User(Base):
     failed_attempts = Column(Integer, default=0)
     successful_logins = Column(Integer, default=0)
     locked_until = Column(DateTime, nullable=True)
+
+
+class Customer(Base):
+    __tablename__ = "customers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    email = Column(String, unique=False, nullable=False)
+    phone = Column(String, nullable=True)
