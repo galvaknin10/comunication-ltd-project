@@ -9,7 +9,10 @@ from models import User, Customer
 import pendulum
 import hashlib
 import time
-
+import smtplib
+from email.mime.text import MIMEText
+from dotenv import load_dotenv
+import os
 
 router = APIRouter()
 
@@ -31,6 +34,19 @@ class CustomerCreate(BaseModel):
 class ChangePasswordRequest(BaseModel):
     username: str
     new_password: str
+
+class EmailRequest(BaseModel):
+    email: str
+
+class VerifyToken(BaseModel):
+    token: str
+    username: str
+
+
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
+EMAIL_USER = os.getenv("EMAIL_USER")
+EMAIL_PASS = os.getenv("EMAIL_PASS")
+
 
 
 @router.post("/register")
@@ -137,6 +153,9 @@ def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db
 
     if not is_password_valid(request.new_password):
         raise HTTPException(status_code=400, detail="Password doesn't meet our policy")
+    
+    if user.password_hash == hash_password(request.new_password, user.salt):
+        raise HTTPException(status_code=400, detail="You must pick a new password!")
 
     user.password_hash = hash_password(request.new_password, user.salt)
     user.successful_logins = 0 
@@ -145,19 +164,51 @@ def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db
 
 
 @router.post("/request-password-reset")
-def request_password_reset(email: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email).first()
+def request_password_reset(request: EmailRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == request.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="Email not found")
 
-    # Generate reset token using SHA-1
     timestamp = str(time.time())
-    raw_string = f"{email}{timestamp}{user.username}"
+    raw_string = f"{request.email}{timestamp}{user.username}"
     token = hashlib.sha1(raw_string.encode()).hexdigest()
 
-    # Save token in DB or memory (you choose)
     user.reset_token = token
+    user.reset_token_created_at = pendulum.now("UTC")
     db.commit()
 
-    # In real-world: send email. Here: return it for now
-    return {"message": "Token generated", "token": token}
+    # Send the token by email
+    send_reset_email(user.email, token)
+
+    return {
+        "message": "Token generated and sent via email",
+        "username": user.username
+    }
+
+def send_reset_email(to_email: str, token: str):
+    msg = MIMEText(f"Here’s your reset token: {token}")
+    msg["Subject"] = "Password Reset Request"
+    msg["From"] = "youremail@gmail.com"
+    msg["To"] = to_email
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.send_message(msg)
+
+
+@router.post("/verify-token")
+def verify_token(request: VerifyToken, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == request.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.reset_token != request.token:
+        raise HTTPException(status_code=400, detail="Invalid token")
+
+    created_at = pendulum.instance(user.reset_token_created_at)
+    if pendulum.now("UTC").diff(created_at).in_minutes() > 3:
+        raise HTTPException(status_code=400, detail="Reset token expired")
+
+    return {
+        "message": "Token verified"
+    }

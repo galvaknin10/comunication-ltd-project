@@ -13,6 +13,9 @@ class User(Base):
     failed_attempts = Column(Integer, default=0)
     successful_logins = Column(Integer, default=0)
     locked_until = Column(DateTime, nullable=True)
+    reset_token = Column(String, nullable=True)
+    reset_token_created_at = Column(DateTime, nullable=True)
+
 
 
 class Customer(Base):

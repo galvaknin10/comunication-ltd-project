@@ -20,8 +20,6 @@ def show():
     if st.button("Update Password"):
         if not new_password or not confirm_password:
             st.warning("Please fill in all fields.")
-        elif new_password == st.session_state.get("password"):
-            st.warning("You must pick a new password!")
         elif new_password != confirm_password:
             st.warning("Passwords do not match.")
         elif len(new_password) < policy["min_length"]:

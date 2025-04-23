@@ -1,8 +1,10 @@
 import streamlit as st
 import requests
 import time
+import re
 
-API_URL = "http://backend:8000/login"
+LOGIN_API_URL = "http://backend:8000/login"
+RESET_PASWWORD_URL = "http://backend:8000/request-password-reset"
 policy = requests.get("http://backend:8000/password-policy").json()
 
 def show():
@@ -14,7 +16,7 @@ def show():
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        response = requests.post(API_URL, json={
+        response = requests.post(LOGIN_API_URL, json={
             "username": username,
             "password": password
         })
@@ -27,7 +29,6 @@ def show():
             if data.get("force_password_change"):
                 st.info("Moved to pick a new password for your safety")
                 time.sleep(2)
-                st.session_state["password"] = password
                 st.session_state.page = "change_password"
             else:
                 st.success("Login successful!")
@@ -56,13 +57,13 @@ def show():
                 st.warning("Enter a valid email (e.g., name@example.com)")
             else:
                 try:
-                    response = requests.post(f"{API_URL}/request-password-reset", json={"email": email})
+                    response = requests.post(RESET_PASWWORD_URL, json={"email": email})
                     if response.status_code == 200:
-                        token = response.json().get("token")
+                        username = response.json().get("username")
                         st.success("Reset token generated! (Check your email)")
-                        st.session_state["reset_token"] = token
-                        st.session_state["reset_email"] = email
-                        st.session_state.page = "verify_token"
+                        time.sleep(2)
+                        st.session_state["username"] = username
+                        st.session_state.page = "verify_token" 
                         st.rerun()
                     else:
                         st.error(f"Error: {response.json().get('detail')}")

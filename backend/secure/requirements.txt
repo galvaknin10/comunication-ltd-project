@@ -2,5 +2,7 @@ fastapi
 uvicorn
 sqlalchemy
 pydantic
-cryptography
+python-dotenv
 pendulum
+cryptography
+email-validator
