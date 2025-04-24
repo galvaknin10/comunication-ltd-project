@@ -4,6 +4,7 @@ import requests
 def show():
     st.title("🧾 Customer Details")
 
+    # Get the last added customer ID from session
     customer_id = st.session_state.get("customer_id")
 
     if not customer_id:
@@ -11,10 +12,13 @@ def show():
         return
 
     try:
+        # Fetch customer details from backend
         response = requests.get(f"http://backend:8000/get-customer/{customer_id}")
         if response.status_code == 200:
             customer = response.json()
-            st.markdown(f"**Name:** {customer['name']}", unsafe_allow_html=True)  # Stored XSS happens here
+            
+            # Display customer info (XSS can occur here if name is not sanitized server-side)
+            st.markdown(f"**Name:** {customer['name']}", unsafe_allow_html=True)
             st.text(f"Email: {customer['email']}")
             st.text(f"Phone: {customer['phone']}")
         else:
@@ -22,7 +26,7 @@ def show():
     except Exception as e:
         st.error(f"Something went wrong: {e}")
 
-
+    # Navigation: return to system dashboard
     if st.button("Go Back"):
         st.session_state.page = "system"
         st.rerun()

@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from models import User, Customer
 from utils.security import generate_salt, hash_password
 
+# Creates a new user with hashed password and saves it to the database
 def create_user(db: Session, username: str, email: str, password: str):
     salt = generate_salt()
     hashed_pw = hash_password(password, salt)
@@ -11,10 +12,10 @@ def create_user(db: Session, username: str, email: str, password: str):
     db.refresh(user)
     return user
 
+# Creates a new customer record and saves it to the database
 def create_customer(db: Session, customer_id: int, name: str, email: str, phone: str):
     customer = Customer(customer_id=customer_id, name=name, email=email, phone=phone)
     db.add(customer)
     db.commit()
     db.refresh(customer)
     return customer
-

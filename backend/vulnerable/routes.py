@@ -44,12 +44,9 @@ class VerifyToken(BaseModel):
     token: str
     username: str
 
-
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
-
-
 
 # @router.post("/register") -> Secure version
 # def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
@@ -71,22 +68,25 @@ EMAIL_PASS = os.getenv("EMAIL_PASS")
 #         password=request.password
 #     )
 
-@router.post("/register") # -> Vulnerable version
+@router.post("/register")  # Vulnerable version: uses raw SQL (subject to injection)
 def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
+    # Check if username already exists
     existing_user = db.query(User).filter(User.username == request.username).first()
     if existing_user:
         raise HTTPException(status_code=409, detail="Username already exists")
+
+    # Generate salt and hash password
     salt = generate_salt()
-    # ❌ Vulnerable raw SQL
+
+    # Insert user using raw SQL (vulnerable to SQL injection)
     raw_query = f"""
     INSERT INTO users (username, email, password_hash, salt, failed_attempts, successful_logins)
-    VALUES ('{request.username}', '{request.email}', '{hash_password(request.password,  salt)}', '{salt}', 0, 0)
+    VALUES ('{request.username}', '{request.email}', '{hash_password(request.password, salt)}', '{salt}', 0, 0)
     """
-
     db.connection().connection.executescript(raw_query)
     db.commit()
-    return {"message": "User registered"}
 
+    return {"message": "User registered"}
 
 @router.get("/password-policy")
 def get_password_policy():
@@ -146,25 +146,27 @@ def get_password_policy():
 #     }
 
 
-@router.post("/login")
+@router.post("/login")  # Vulnerable version: subject to SQL injection
 def login_user(request: LoginRequest, db: Session = Depends(get_db)):
+    # Get raw SQLite connection and cursor
     conn = db.connection().connection
-    cur  = conn.cursor()
+    cur = conn.cursor()
 
-    # get salt
+    # Fetch the user's salt (vulnerable to SQL injection via username)
     cur.execute(f"SELECT salt FROM users WHERE username = '{request.username}';")
     row = cur.fetchone()
     if not row:
         raise HTTPException(404, "User not found")
     salt = row[0]
 
+    # Hash the provided password using the fetched salt
     pw_hash = hash_password(request.password, salt)
 
-    # ONE-LINER vulnerable check
+    # Vulnerable raw SQL query to verify user credentials
     login_sql = (
-      f"SELECT * FROM users "
-      f"WHERE username = '{request.username}' "
-      f"AND password_hash = '{pw_hash}';"
+        f"SELECT * FROM users "
+        f"WHERE username = '{request.username}' "
+        f"AND password_hash = '{pw_hash}';"
     )
     cur.execute(login_sql)
     user_row = cur.fetchone()
@@ -172,7 +174,6 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(401, "Auth failed")
 
     return {"message": "Logged in (vuln branch)"}
-
 
 
 # @router.post("/customers") -> secure version
@@ -189,12 +190,14 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
 #         phone=request.phone
 #     )
 
-@router.post("/customers")
+@router.post("/customers")  # Vulnerable version: subject to SQL injection
 def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
+    # Check for existing customer with the same ID
     existing_customer = db.query(Customer).filter(Customer.customer_id == request.customer_id).first()
     if existing_customer:
         raise HTTPException(status_code=409, detail="Customer already exists")
-    # 🔥 raw‐SQL vulnerability
+
+    # Vulnerable raw SQL insertion (exploitable with SQL injection)
     raw_sql = f"""
     INSERT INTO customers (customer_id, name, email, phone)
     VALUES (
@@ -204,19 +207,21 @@ def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
       '{request.phone}'
     );
     """
-    # executescript lets you run multiple statements
+
+    # executescript allows multiple SQL statements, enabling chained injection
     try:
         db.connection().connection.executescript(raw_sql)
         db.commit()
     except OperationalError:
-        # ignore the stray-line parse error
+        # Silently ignore syntax errors from malformed or injected queries
         pass
 
+    # Return inserted data (echoed back)
     return {
-      "customer_id": request.customer_id,
-      "name":        request.name,
-      "email":       request.email,
-      "phone":       request.phone
+        "customer_id": request.customer_id,
+        "name":        request.name,
+        "email":       request.email,
+        "phone":       request.phone
     }
 
 @router.post("/change-password")
@@ -238,7 +243,6 @@ def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db
     user.successful_logins = 0 
     db.commit()
     return {"message": "Password updated"}
-
 
 @router.post("/request-password-reset")
 def request_password_reset(request: EmailRequest, db: Session = Depends(get_db)):
@@ -272,7 +276,6 @@ def send_reset_email(to_email: str, token: str):
         server.login(EMAIL_USER, EMAIL_PASS)
         server.send_message(msg)
 
-
 @router.post("/verify-token")
 def verify_token(request: VerifyToken, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == request.username).first()
@@ -289,7 +292,6 @@ def verify_token(request: VerifyToken, db: Session = Depends(get_db)):
     return {
         "message": "Token verified"
     }
-
 
 @router.get("/get-customer/{customer_id}")
 def get_customer_by_id(customer_id: int, db: Session = Depends(get_db)):

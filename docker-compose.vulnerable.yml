@@ -8,7 +8,7 @@ services:
       - ./backend/vulnerable:/app
       - ./database:/app/database
     ports:
-      - "8000:8000"  # Changed host port to avoid conflict with secure version
+      - "8000:8000"  
     env_file:
       - ./backend/.env
 
@@ -18,7 +18,7 @@ services:
     volumes:
       - ./frontend:/app
     ports:
-      - "8501:8501"  # Optional: Different frontend port
+      - "8501:8501"  
     depends_on:
       - backend
 

@@ -8,16 +8,20 @@ CHANGE_PASSWORD_URL = "http://backend:8000/change-password"
 
 def show():
     st.title("🔐 Change Password")
+    
+    # Display password policy details
     st.markdown(f"""
     **Password requirements:**
     - Minimum **{policy['min_length']}** characters  
     - {policy['guidelines']}
     """)
 
+    # Input fields for new password and confirmation
     new_password = st.text_input("New Password", type="password")
     confirm_password = st.text_input("Confirm Password", type="password")
 
     if st.button("Update Password"):
+        # Basic input validation
         if not new_password or not confirm_password:
             st.warning("Please fill in all fields.")
         elif new_password != confirm_password:
@@ -27,6 +31,7 @@ def show():
         elif not re.match(policy["regex"], new_password):
             st.warning(f"{policy['guidelines']}")
         else:
+            # Submit password change request to backend
             try:
                 response = requests.post(CHANGE_PASSWORD_URL, json={
                     "username": st.session_state.get("username"),
@@ -42,3 +47,4 @@ def show():
                     st.error(f"Error: {response.json().get('detail')}")
             except Exception as e:
                 st.error(f"Something went wrong: {e}")
+
