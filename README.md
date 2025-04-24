@@ -195,6 +195,14 @@ def create_customer(db: Session, customer_id: int, name: str, email: str, phone:
 
 > The secure version uses ORM objects to safely persist data. This prevents attackers from chaining raw SQL payloads that can harm the database.
 
+## Sample Users for Testing
+
+| Username | Password   |
+|----------|------------|
+| `gal`    | `12345Hh&` |
+| `harel`  | `67890Jj*` |
+
+
 ## License
 
 MIT © 2025 
