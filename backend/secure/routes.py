@@ -13,6 +13,7 @@ import smtplib
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 import os
+import bleach
 
 router = APIRouter()
 
@@ -26,7 +27,7 @@ class LoginRequest(BaseModel):
     password: str
 
 class CustomerCreate(BaseModel):
-    customer_id: int
+    customer_id: str
     name: str
     email: str
     phone: str 
@@ -136,7 +137,7 @@ def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
     return create_customer(
         db=db,
         customer_id=request.customer_id,
-        name=request.name,
+        name= bleach.clean(request.name), # Secure version
         email=request.email,
         phone=request.phone
     )
@@ -211,4 +212,17 @@ def verify_token(request: VerifyToken, db: Session = Depends(get_db)):
 
     return {
         "message": "Token verified"
+    }
+
+
+@router.get("/get-customer/{customer_id}")
+def get_customer_by_id(customer_id: str, db: Session = Depends(get_db)):
+    customer = db.query(Customer).filter(Customer.customer_id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    return {
+        "name": customer.name,
+        "email": customer.email,
+        "phone": customer.phone
     }

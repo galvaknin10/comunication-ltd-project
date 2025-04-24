@@ -6,7 +6,7 @@ from screens.login import policy
 
 API_URL = "http://backend:8000/register"
 EMAIL_REGEX = r"^[\w\.-]+@[\w\.-]+\.\w+$"
-USERNAME_REGEX = r"^(?=.*[a-zA-Z]).{3,20}$"  # 3–20 chars, must include letters
+USERNAME_REGEX = r"^(?=.*[a-zA-Z]).{3,50}$"  # 3–30 chars, must include letters
 
 def show():
     st.title("📝 Register New User")
@@ -28,7 +28,7 @@ def show():
 
         # 2. Username validation
         elif not re.match(USERNAME_REGEX, username):
-            st.warning("Username must be 3–20 characters long and include at least one letter.")
+            st.warning("Username must be 3–50 characters long and include at least one letter.")
 
         # 3. Email format check
         elif not re.match(EMAIL_REGEX, email):

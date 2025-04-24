@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend/vulnerable
+    volumes:
+      - ./backend/vulnerable:/app
+      - ./database:/app/database
+    ports:
+      - "8000:8000"  # Changed host port to avoid conflict with secure version
+    env_file:
+      - ./backend/.env
+
+  frontend:
+    build:
+      context: ./frontend
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "8501:8501"  # Optional: Different frontend port
+    depends_on:
+      - backend
+

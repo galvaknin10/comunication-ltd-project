@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import re
+import time
 
 API_URL = "http://backend:8000/customers"
 
@@ -19,15 +20,16 @@ def show():
             st.warning("All fields are required.")
             return
 
-        # 2. Customer ID: must be 9 digits
-        if not re.fullmatch(r"\d{9}", customer_id):
-            st.warning("Customer ID must be exactly 9 digits.")
-            return
+        # ❌ Remove this check to allow malicious input (vulnerable version)
+        # # 2. Customer ID: must be 9 digits
+        # if not re.fullmatch(r"\d{9}", customer_id):
+        #     st.warning("Customer ID must be exactly 9 digits.")
+        #     return
 
-        # 3. Full name: two words, only letters
-        if not re.fullmatch(r"[A-Za-z]+ [A-Za-z]+", full_name):
-            st.warning("Full name must include first and last name, letters only.")
-            return
+        # ❌ Remove this check to allow malicious input (vulnerable version)
+        # if not re.fullmatch(r"[A-Za-z]+ [A-Za-z]+", full_name):
+        #     st.warning("Full name must include first and last name, letters only.")
+        #     return
 
         # 4. Email: basic format
         if not re.fullmatch(r"^[\w\.-]+@[\w\.-]+\.\w+$", email):
@@ -42,15 +44,20 @@ def show():
         # 6. Submit
         try:
             response = requests.post(API_URL, json={
-                "customer_id": int(customer_id),
+                "customer_id": customer_id,
                 "name": full_name,
                 "email": email,
                 "phone": phone
             })
 
             if response.status_code == 200:
-                customer_name = response.json().get("name")
-                st.success(f"Customer '{customer_name}' added successfully!")
+                customer = response.json()
+                st.success(f"Customer '{customer['name']}' added successfully!")
+                time.sleep(2)
+                st.session_state["customer_id"] = customer["customer_id"]
+                st.session_state.page = "view_customer"
+                st.rerun()
+
             else:
                 try:
                     detail = response.json().get("detail")
