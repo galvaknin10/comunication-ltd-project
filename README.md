@@ -91,7 +91,14 @@ customer_name: <b style="color:red">Hacked</b>
 
 * Vulnerable Implementation:
 ```python
-name=request.name
+INSERT INTO customers (customer_id, name, email, phone)
+VALUES (
+  '{request.customer_id}',
+  '{request.name}',
+  '{request.email}',
+  '{request.phone}'
+);
+"""
 ```
 
 * Secure Implementation:
