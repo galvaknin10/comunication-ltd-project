@@ -115,7 +115,7 @@ name=bleach.clean(request.name)
 * Example payload:
 
 ```sql
-username: hacker'); DROP TABLE users; --
+username: hacker', 'x','y','z'); DROP TABLE users; --
 ```
 
 * Vulnerable Implementation:
