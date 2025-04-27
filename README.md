@@ -28,10 +28,10 @@ The application is built with a **Python**-based tech stack. The frontend is dev
 
 1. Terminal:
 
-   ```bash
-   git clone https://github.com/galvaknin10/comunication-ltd-project.git
-   cd comunication-ltd-project
-   ```
+ ```bash
+ git clone https://github.com/galvaknin10/comunication-ltd-project.git
+ cd comunication-ltd-project
+ ```
 
 2.  Create a `.env` file inside the `backend` directory and paste:
 
@@ -151,11 +151,11 @@ username: ' OR '1'='1' --
 * Vulnerable Implementation:
 
 ```python
-    raw_sql = f"""
-      SELECT * FROM users
-      WHERE username = '{request.username}'
-        AND password_hash = '{hash_password(request.password, generate_salt())}';
-    """
+raw_sql = f"""
+  SELECT * FROM users
+  WHERE username = '{request.username}'
+    AND password_hash = '{hash_password(request.password, generate_salt())}';
+"""
 ```
 
 * Secure Implementation:
@@ -179,14 +179,14 @@ customer_id: 999', 'x','y','z'); DROP TABLE customers; --
 * Vulnerable Implementation:
 
 ```python
-    INSERT INTO customers (customer_id, name, email, phone)
-    VALUES (
-      '{request.customer_id}',
-      '{request.name}',
-      '{request.email}',
-      '{request.phone}'
-    );
-    """
+INSERT INTO customers (customer_id, name, email, phone)
+VALUES (
+  '{request.customer_id}',
+  '{request.name}',
+  '{request.email}',
+  '{request.phone}'
+);
+"""
 ```
 
 * Secure Implementation:
