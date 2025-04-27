@@ -84,6 +84,26 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
         password=request.password
     )
 
+@router.post("/change-password")
+def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == request.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if request.new_password in COMMON_PASSWORDS:
+        raise HTTPException(status_code=400, detail="Your password is too common. Try picking something more unique and secure.")
+
+    if not is_password_valid(request.new_password):
+        raise HTTPException(status_code=400, detail="Password doesn't meet our policy")
+    
+    if user.password_hash == hash_password(request.new_password, user.salt):
+        raise HTTPException(status_code=400, detail="You must pick a new password!")
+
+    user.password_hash = hash_password(request.new_password, user.salt)
+    user.successful_logins = 0 
+    db.commit()
+    return {"message": "Password updated"}
+
 @router.get("/password-policy")
 def get_password_policy():
     # Returns current password policy configuration for client-side validation
@@ -154,20 +174,6 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
 
 @router.post("/customers")
 def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
-    existing_customer = db.query(Customer).filter(Customer.customer_id == request.customer_id).first()
-    if existing_customer:
-        raise HTTPException(status_code=409, detail="Customer already exists")
-
-    return create_customer(
-        db=db,
-        customer_id=request.customer_id,
-        name= bleach.clean(request.name), # Secure version
-        email=request.email,
-        phone=request.phone
-    )
-
-@router.post("/customers")
-def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
     # Check if the customer ID already exists
     existing_customer = db.query(Customer).filter(Customer.customer_id == request.customer_id).first()
     if existing_customer:
@@ -212,7 +218,7 @@ def send_reset_email(to_email: str, token: str):
     # Compose the email content
     msg = MIMEText(f"Here’s your reset token: {token}")
     msg["Subject"] = "Password Reset Request"
-    msg["From"] = "youremail@gmail.com"
+    msg["From"] = EMAIL_USER
     msg["To"] = to_email
 
     # Send email over secure SMTP connection

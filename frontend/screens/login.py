@@ -16,29 +16,35 @@ def show():
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        # Send login request to backend
-        response = requests.post(LOGIN_API_URL, json={
-            "username": username,
-            "password": password
-        })
 
-        if response.status_code == 200:
-            data = response.json()
-            st.session_state["username"] = username
-
-            # Redirect to password change screen if forced
-            if data.get("force_password_change"):
-                st.info("Moved to pick a new password for your safety")
-                time.sleep(2)
-                st.session_state.page = "change_password"
-            else:
-                st.success("Login successful!")
-                time.sleep(2)
-                st.session_state.page = "system"
-
-            st.rerun()
+        if not username or not password:
+            st.warning("All fields are required.")
+            
         else:
-            st.error(f"Error: {response.json().get('detail')}")
+    
+            # Send login request to backend
+            response = requests.post(LOGIN_API_URL, json={
+                "username": username,
+                "password": password
+            })
+
+            if response.status_code == 200:
+                data = response.json()
+                st.session_state["username"] = username
+
+                # Redirect to password change screen if forced
+                if data.get("force_password_change"):
+                    st.info("Moved to pick a new password for your safety")
+                    time.sleep(2)
+                    st.session_state.page = "change_password"
+                else:
+                    st.success("Login successful!")
+                    time.sleep(2)
+                    st.session_state.page = "system"
+
+                st.rerun()
+            else:
+                st.error(f"Error: {response.json().get('detail')}")
 
     st.markdown("---")
 

@@ -269,7 +269,7 @@ def request_password_reset(request: EmailRequest, db: Session = Depends(get_db))
 def send_reset_email(to_email: str, token: str):
     msg = MIMEText(f"Here’s your reset token: {token}")
     msg["Subject"] = "Password Reset Request"
-    msg["From"] = "youremail@gmail.com"
+    msg["From"] = EMAIL_USER
     msg["To"] = to_email
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
