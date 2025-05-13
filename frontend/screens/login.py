@@ -38,7 +38,7 @@ def show():
                     time.sleep(2)
                     st.session_state.page = "change_password"
                 else:
-                    st.success("Login successful!")
+                    st.success(data.get("message"))
                     time.sleep(2)
                     st.session_state.page = "system"
 
@@ -65,10 +65,9 @@ def show():
                 try:
                     response = requests.post(RESET_PASSWORD_URL, json={"email": email})
                     if response.status_code == 200:
-                        username = response.json().get("username")
-                        st.success("Reset token generated! (Check your email)")
+                        data = response.json()
+                        st.success(data.get("message"))
                         time.sleep(2)
-                        st.session_state["username"] = username
                         st.session_state.page = "verify_token"
                         st.rerun()
                     else:

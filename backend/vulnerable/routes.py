@@ -6,7 +6,7 @@ from crud import create_user, create_customer
 from utils.security import is_password_valid, hash_password, generate_salt
 from config import COMMON_PASSWORDS, PASSWORD_COMPLEXITY_REGEX, MIN_PASSWORD_LENGTH, GUIDLINE_DESCRIPTION, FORCE_PASSWORD_CHANGE_AFTER_LOGINS, MAX_LOGIN_ATTEMPTS
 from models import User, Customer
-import pendulum
+import os, hmac, hashlib, re, pendulum
 import hashlib
 import time
 import smtplib
@@ -48,48 +48,108 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 
-# @router.post("/register") -> Secure version
-# def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
-#     existing_user = db.query(User).filter(User.username == request.username).first()
-#     if existing_user:
-#         raise HTTPException(status_code=409, detail="Username already exists")
-    
-#     if request.password in COMMON_PASSWORDS:
-#         raise HTTPException(status_code=400, detail="Your password is too common. Try picking something more unique and secure.")
 
-#     if not is_password_valid(request.password):
-#         raise HTTPException(status_code=400, detail="Password doesn't meet our policy")
+@router.post("/register")
+def register_user_vulnerable(request: RegisterRequest, db: Session = Depends(get_db)):
+    # 1. Raw user inputs (no XSS protection)
+    username = request.username
+    password = request.password
+    email    = request.email
 
+    # 2. Raw SQL string interpolation (SQLi open)
+    conn = db.connection().connection
+    cur  = conn.cursor()
+    cur.execute(
+        f"SELECT 1 FROM users WHERE username = '{username}';"
+    )
+    exists = cur.fetchone()
+    if exists:
+        # Irresponsible error, disclosing if the username is taken
+        raise HTTPException(status_code=409, detail="This Username is already exist")
 
-#     return create_user(
-#         db=db,
-#         username=request.username,
-#         email=request.email,
-#         password=request.password
-#     )
+    # 3. Password policy check (same as before)
+    if password in COMMON_PASSWORDS:
+        raise HTTPException(status_code=400, detail="Password too common")
+    if not (len(password) >= MIN_PASSWORD_LENGTH and re.match(PASSWORD_COMPLEXITY_REGEX, password)):
+        raise HTTPException(status_code=400, detail="Password doesn't meet policy")
 
-@router.post("/register")  # Vulnerable version: uses raw SQL (subject to injection)
-def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
-    # Check if username already exists
-    existing_user = db.query(User).filter(User.username == request.username).first()
-    if existing_user:
-        raise HTTPException(status_code=409, detail="Username already exists")
+    # 4. Hashing
+    salt    = os.urandom(16).hex()
+    pw_hash = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
 
-    # Generate salt and hash password
-    salt = generate_salt()
-
-    # Insert user using raw SQL (vulnerable to SQL injection)
+    # 5. Raw INSERT (SQLi open via executescript)
     raw_query = f"""
-    INSERT INTO users (username, email, password_hash, salt, failed_attempts, successful_logins)
-    VALUES ('{request.username}', '{request.email}', '{hash_password(request.password, salt)}', '{salt}', 0, 0)
+    INSERT INTO users (username, email, password_hash, salt)
+    VALUES (
+      '{username}',
+      '{email}',
+      '{pw_hash}',
+      '{salt}'
+    );
     """
-    db.connection().connection.executescript(raw_query)
+    # grab the underlying SQLite connection and run the script
+    conn.executescript(raw_query)
     db.commit()
 
-    return {"message": "User registered"}
+
+    # 6. Response
+    return {"message": "User registered successfully!"}
+
+
+@router.post("/change-password")
+def change_password_vulnerable(request: ChangePasswordRequest, db: Session = Depends(get_db)):
+    # 1. Raw user inputs (no html.escape → XSS possible if rendered)
+    username     = request.username
+    old_password = request.old_password
+    new_password = request.new_password
+
+    # 2. Fetch stored hash & salt via raw SQL (SQLi on username)
+    conn = db.connection().connection
+    cur  = conn.cursor()
+    cur.execute(
+        f"SELECT password_hash, salt FROM users WHERE username = '{username}';"
+    )
+    row = cur.fetchone()
+    if not row:
+        # Irresponsible error leak
+        raise HTTPException(status_code=400, detail="This username is not found")
+    stored_hash, salt = row
+
+
+    # 3. Verify the old password
+    old_hash = hmac.new(salt.encode(), old_password.encode(), hashlib.sha256).hexdigest()
+    if old_hash != stored_hash:
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+
+    # 4. Ensure the new password differs from the old
+    new_hash = hmac.new(salt.encode(), new_password.encode(), hashlib.sha256).hexdigest()
+    if new_hash == stored_hash:
+        raise HTTPException(status_code=400, detail="New password must differ from the old one")
+
+    # 5. Password policy (same checks, but using raw input)
+    if new_password in COMMON_PASSWORDS:
+        raise HTTPException(status_code=400, detail="Password too common")
+    if not (len(new_password) >= MIN_PASSWORD_LENGTH and re.match(PASSWORD_COMPLEXITY_REGEX, new_password)):
+        raise HTTPException(status_code=400, detail="Password doesn't meet policy")
+
+    # 6. Raw UPDATE via f‐string (SQLi on both username & new_hash)
+    raw_query = f"""
+    UPDATE users
+       SET password_hash     = '{new_hash}',
+           successful_logins = 0
+     WHERE username = '{username}';
+    """
+    # executescript allows chaining, fully SQLi-exposed
+    conn.executescript(raw_query)
+    db.commit()
+
+    # 7. Echo back generic success (raw message)
+    return {"message": "Password updated successfully"}
+
 
 @router.get("/password-policy")
 def get_password_policy():
+    # Returns current password policy configuration for client-side validation
     return {
         "min_length": MIN_PASSWORD_LENGTH,
         "common_passwords": list(COMMON_PASSWORDS),
@@ -97,174 +157,183 @@ def get_password_policy():
         "guidelines": GUIDLINE_DESCRIPTION
     }
 
-# @router.post("/login") -> secure version
-# def login_user(request: LoginRequest, db: Session = Depends(get_db)):
-#     user = db.query(User).filter(User.username == request.username).first()
-
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-
-#     now_utc = pendulum.now("UTC")
-
-#     # ⛔ Already locked?
-#     if user.locked_until and pendulum.instance(user.locked_until) > now_utc:
-#         locked_time = pendulum.instance(user.locked_until).in_timezone("Asia/Jerusalem").format("HH:mm:ss")
-#         raise HTTPException(status_code=403, detail=f"Account locked until {locked_time}")
-#     elif user.locked_until and pendulum.instance(user.locked_until) <= now_utc:
-#         # Lock expired — clear it and reset failed attempts
-#         user.locked_until = None
-#         user.failed_attempts = 0
-#         db.commit()
-
-#     # 🔐 Check password
-#     hashed = hash_password(request.password, user.salt)
-
-#     if hashed != user.password_hash:
-#         user.failed_attempts += 1
-
-#         if user.failed_attempts >= MAX_LOGIN_ATTEMPTS:
-#             user.locked_until = now_utc.add(minutes=3)
-#             db.commit()
-#             raise HTTPException(status_code=403, detail="Account locked due to too many failed attempts.")
-
-#         if user.failed_attempts == MAX_LOGIN_ATTEMPTS - 1:
-#             db.commit()
-#             raise HTTPException(status_code=403, detail="Notice: 1 more failed attempt before lock.")
-
-#         db.commit()
-#         raise HTTPException(status_code=401, detail="Incorrect password")
-
-#     # ✅ Successful login
-#     user.failed_attempts = 0
-#     user.successful_logins += 1
-#     user.locked_until = None
-#     db.commit()
-
-#     return {
-#         "message": "Login successful",
-#         "force_password_change": user.successful_logins >= FORCE_PASSWORD_CHANGE_AFTER_LOGINS
-#     }
 
 
-@router.post("/login")  # Vulnerable version: subject to SQL injection
-def login_user(request: LoginRequest, db: Session = Depends(get_db)):
-    # Get raw SQLite connection and cursor
+@router.post("/login-vulnerable")
+def login_user_vulnerable(request: LoginRequest, db: Session = Depends(get_db)):
+    # 1. Raw inputs (no html.escape → XSS if ever rendered)
+    username = request.username
+    password = request.password
+
+    # 2. Fetch everything via raw SQL (SQLi on username)
     conn = db.connection().connection
-    cur = conn.cursor()
-
-    # Fetch the user's salt (vulnerable to SQL injection via username)
-    cur.execute(f"SELECT salt FROM users WHERE username = '{request.username}';")
+    cur  = conn.cursor()
+    cur.execute(
+        f"SELECT id, password_hash, salt, failed_attempts, locked_until, successful_logins "
+        f"FROM users WHERE username = '{username}';"
+    )
     row = cur.fetchone()
     if not row:
-        raise HTTPException(404, "User not found")
-    salt = row[0]
+        raise HTTPException(status_code=401, detail="This username is not found")
 
-    # Hash the provided password using the fetched salt
-    pw_hash = hash_password(request.password, salt)
+    # 2a. Unpack the tuple
+    user_id, stored_hash, salt, failed_attempts, locked_until, successful_logins = row
 
-    # Vulnerable raw SQL query to verify user credentials
-    login_sql = (
-        f"SELECT * FROM users "
-        f"WHERE username = '{request.username}' "
-        f"AND password_hash = '{pw_hash}';"
+    now_utc = pendulum.now("UTC")
+
+    # 3. If account is locked, reject
+    if locked_until and pendulum.instance(locked_until) > now_utc:
+        locked_time = (
+            pendulum.instance(locked_until)
+            .in_timezone("Asia/Jerusalem")
+            .format("HH:mm:ss")
+        )
+        raise HTTPException(status_code=403, detail=f"Account locked until {locked_time}")
+
+    # 4. If lockout expired, reset counters
+    if locked_until and pendulum.instance(locked_until) <= now_utc:
+        conn.executescript(
+            f"UPDATE users "
+            f"SET locked_until = NULL, failed_attempts = 0 "
+            f"WHERE id = '{user_id}';"
+        )
+        db.commit()
+
+    # 5. Verify password
+    hashed = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
+    if hashed != stored_hash:
+        attempts = failed_attempts + 1
+
+        # 5a. Lock account if too many failures
+        if attempts >= MAX_LOGIN_ATTEMPTS:
+            lock_ts = now_utc.add(minutes=3)
+            conn.executescript(
+                f"UPDATE users "
+                f"SET failed_attempts = {attempts}, locked_until = '{lock_ts}' "
+                f"WHERE id = '{user_id}';"
+            )
+            db.commit()
+            raise HTTPException(status_code=403, detail="Account locked due to too many failed attempts.")
+
+        # 5b. Warn one attempt before lock
+        if attempts == MAX_LOGIN_ATTEMPTS - 1:
+            conn.executescript(
+                f"UPDATE users "
+                f"SET failed_attempts = {attempts} "
+                f"WHERE id = '{user_id}';"
+            )
+            db.commit()
+            raise HTTPException(status_code=403, detail="Notice: 1 more failed attempt before lock.")
+
+        # 5c. Otherwise just bump the counter
+        conn.executescript(
+            f"UPDATE users "
+            f"SET failed_attempts = {attempts} "
+            f"WHERE id = '{user_id}';"
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # 6. On success: reset failures & bump logins
+    conn.executescript(
+        f"UPDATE users "
+        f"SET failed_attempts   = 0, "
+        f"    successful_logins = {successful_logins + 1}, "
+        f"    locked_until      = NULL "
+        f"WHERE id = '{user_id}';"
     )
-    cur.execute(login_sql)
-    user_row = cur.fetchone()
-    if not user_row:
-        raise HTTPException(401, "Auth failed")
+    db.commit()
 
-    return {"message": "Logged in (vuln branch)"}
+    # 7. Return raw result
+    return {
+        "message": "Login successful",
+        "force_password_change": successful_logins + 1 >= FORCE_PASSWORD_CHANGE_AFTER_LOGINS
+    }
 
 
-# @router.post("/customers") -> secure version
-# def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
-#     existing_customer = db.query(Customer).filter(Customer.customer_id == request.customer_id).first()
-#     if existing_customer:
-#         raise HTTPException(status_code=409, detail="Customer already exists")
 
-#     return create_customer(
-#         db=db,
-#         customer_id=request.customer_id,
-#         name=request.name, 
-#         email=request.email,
-#         phone=request.phone
-#     )
 
-@router.post("/customers")  # Vulnerable version: subject to SQL injection
-def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
-    # Check for existing customer with the same ID
-    existing_customer = db.query(Customer).filter(Customer.customer_id == request.customer_id).first()
-    if existing_customer:
+@router.post("/customers")
+def add_customer_vulnerable(request: CustomerCreate, db: Session = Depends(get_db)):
+    # 1. Raw user inputs (no html.escape → XSS possible if ever rendered)
+    customer_id = request.customer_id
+    name        = request.name
+    email       = request.email
+    phone       = request.phone
+
+    # 2. Existence check via raw SQL string interpolation (SQLi possible)
+    conn = db.connection().connection
+    cur  = conn.cursor()
+    cur.execute(
+        f"SELECT 1 FROM customers WHERE customer_id = '{customer_id}';"
+    )
+    exists = cur.fetchone()
+    if exists:
+        # A message that reveals information
         raise HTTPException(status_code=409, detail="Customer already exists")
 
-    # Vulnerable raw SQL insertion (exploitable with SQL injection)
-    raw_sql = f"""
+    # 3. Raw INSERT (SQLi on all fields)
+    raw_query = f"""
     INSERT INTO customers (customer_id, name, email, phone)
     VALUES (
-      '{request.customer_id}',
-      '{request.name}',
-      '{request.email}',
-      '{request.phone}'
+      '{customer_id}',
+      '{name}',
+      '{email}',
+      '{phone}'
     );
     """
+    conn.executescript(raw_query)
+    db.commit()
 
-    # executescript allows multiple SQL statements, enabling chained injection
-    try:
-        db.connection().connection.executescript(raw_sql)
-        db.commit()
-    except OperationalError:
-        # Silently ignore syntax errors from malformed or injected queries
-        pass
-
-    # Return inserted data (echoed back)
+    # 4. Echo back raw data (reflected XSS if frontend renders as HTML)
     return {
-        "customer_id": request.customer_id,
-        "name":        request.name,
-        "email":       request.email,
-        "phone":       request.phone
+        "customer_id": customer_id,
+        "name":        name,
+        "email":       email,
+        "phone":       phone
     }
 
-@router.post("/change-password")
-def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == request.username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if request.new_password in COMMON_PASSWORDS:
-        raise HTTPException(status_code=400, detail="Your password is too common. Try picking something more unique and secure.")
-
-    if not is_password_valid(request.new_password):
-        raise HTTPException(status_code=400, detail="Password doesn't meet our policy")
-    
-    if user.password_hash == hash_password(request.new_password, user.salt):
-        raise HTTPException(status_code=400, detail="You must pick a new password!")
-
-    user.password_hash = hash_password(request.new_password, user.salt)
-    user.successful_logins = 0 
-    db.commit()
-    return {"message": "Password updated"}
 
 @router.post("/request-password-reset")
-def request_password_reset(request: EmailRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == request.email).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Email not found")
+def request_password_reset_vulnerable(request: EmailRequest, db: Session = Depends(get_db)):
+    # 1. Raw email input (no html.escape → XSS possible if ever reflected)
+    email = request.email
 
-    timestamp = str(time.time())
-    raw_string = f"{request.email}{timestamp}{user.username}"
-    token = hashlib.sha1(raw_string.encode()).hexdigest()
+    # 2. Lookup via raw SQL string interpolation (SQLi on email)
+    conn = db.connection().connection
+    cur  = conn.cursor()
+    cur.execute(
+        f"SELECT id, username, email FROM users WHERE email = '{email}';"
+    )
+    row = cur.fetchone()
+    id, username = row
 
-    user.reset_token = token
-    user.reset_token_created_at = pendulum.now("UTC")
-    db.commit()
+    if row:
+        # 3. Build token
+        ts = str(time.time())
+        raw = f"{email}{ts}{row.username}"
+        token = hashlib.sha1(raw.encode()).hexdigest()
 
-    # Send the token by email
-    send_reset_email(user.email, token)
+        # 4. Store token via raw SQL f-string (SQLi on token & id)
+        now_utc = pendulum.now("UTC")
+        raw_query = f"""
+        UPDATE users
+        SET reset_token             = '{token}',
+            reset_token_created_at  = '{now_utc}'
+        WHERE id = {id};
+        """
+
+        conn.executescript(raw_query)
+        db.commit()
+
+        # 5. Send the real reset email
+        send_reset_email(email, token)
 
     return {
+        # A message that may reveal safe information
         "message": "Token generated and sent via email",
-        "username": user.username
     }
+
 
 def send_reset_email(to_email: str, token: str):
     msg = MIMEText(f"Here’s your reset token: {token}")
@@ -276,31 +345,62 @@ def send_reset_email(to_email: str, token: str):
         server.login(EMAIL_USER, EMAIL_PASS)
         server.send_message(msg)
 
-@router.post("/verify-token")
-def verify_token(request: VerifyToken, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == request.username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
 
-    if user.reset_token != request.token:
+@router.post("/verify-token")
+def verify_token_vulnerable(request: VerifyToken, db: Session = Depends(get_db)):
+    # 1. Raw token input (no html.escape → XSS possible if ever reflected)
+    token = request.token
+
+    # 2. Lookup via raw SQL string interpolation (SQLi on token)
+    conn = db.connection().connection
+    cur  = conn.cursor()
+    cur.execute(
+        f"SELECT username, reset_token_created_at "
+        f"FROM users WHERE reset_token = '{token}';"
+    )
+    row = cur.fetchone()
+    username, reset_token_created_at = row
+
+    # 3. If no match → invalid token
+    if not row:
         raise HTTPException(status_code=400, detail="Invalid token")
 
-    created_at = pendulum.instance(user.reset_token_created_at)
+    # 4. Check token age (valid for 3 minutes)
+    created_at = pendulum.instance(reset_token_created_at)
     if pendulum.now("UTC").diff(created_at).in_minutes() > 3:
         raise HTTPException(status_code=400, detail="Reset token expired")
 
+    # 5. Success → return raw username (potential XSS if rendered)
     return {
-        "message": "Token verified"
+        "message": "Token verified!",
+        "user_name": username
     }
 
-@router.get("/get-customer/{customer_id}")
-def get_customer_by_id(customer_id: int, db: Session = Depends(get_db)):
-    customer = db.query(Customer).filter(Customer.customer_id == customer_id).first()
-    if not customer:
+
+@router.get("/customers/{customer_id}")
+def get_customer_vulnerable(customer_id: str, db: Session = Depends(get_db)):
+    # 1. Raw path param (no html.escape → reflected XSS possible)
+    cid = customer_id
+
+    # 2. Raw SQL string interpolation (SQLi on customer_id)
+    conn = db.connection().connection
+    cur  = conn.cursor()
+    cur.execute(
+        f"SELECT name, email, phone "
+        f"FROM customers "
+        f"WHERE customer_id = '{cid}';"
+    )
+    row = cur.fetchone()
+    name, email, phone = row
+
+
+    # 3. 404 if missing
+    if not row:
         raise HTTPException(status_code=404, detail="Customer not found")
-    
+
+    # 4. Return raw fields (reflected XSS if rendered)
     return {
-        "name": customer.name,
-        "email": customer.email,
-        "phone": customer.phone
+        "name":  name,
+        "email": email,
+        "phone": phone
     }

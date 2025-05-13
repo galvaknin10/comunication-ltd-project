@@ -16,13 +16,14 @@ def show():
     - {policy['guidelines']}
     """)
 
-    # Input fields for new password and confirmation
+    # Input fields for validate old password, create new password and confirmation
+    old_password = st.text_input("Old Password", type="password")
     new_password = st.text_input("New Password", type="password")
     confirm_password = st.text_input("Confirm Password", type="password")
 
     if st.button("Update Password"):
         # Basic input validation
-        if not new_password or not confirm_password:
+        if not new_password or not confirm_password or not old_password:
             st.warning("Please fill in all fields.")
         elif new_password != confirm_password:
             st.warning("Passwords do not match.")
@@ -35,11 +36,13 @@ def show():
             try:
                 response = requests.post(CHANGE_PASSWORD_URL, json={
                     "username": st.session_state.get("username"),
+                    "old_password": old_password,
                     "new_password": new_password
                 })
 
                 if response.status_code == 200:
-                    st.success("Password changed successfully. Please log in again.")
+                    data = response.json()
+                    st.success(f"{data.get('message')}, Please log in again.")
                     time.sleep(2)
                     st.session_state.page = "login"
                     st.rerun()

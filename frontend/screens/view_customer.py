@@ -7,20 +7,16 @@ def show():
     # Get the last added customer ID from session
     customer_id = st.session_state.get("customer_id")
 
-    if not customer_id:
-        st.error("No customer ID found. Please go back and add a customer.")
-        return
-
     try:
         # Fetch customer details from backend
         response = requests.get(f"http://backend:8000/get-customer/{customer_id}")
         if response.status_code == 200:
             customer = response.json()
             
-            # Display customer info (XSS can occur here if name is not sanitized server-side)
+            # Display customer info (XSS can occur here if output is not sanitized server-side)
             st.markdown(f"**Name:** {customer['name']}", unsafe_allow_html=True)
-            st.text(f"Email: {customer['email']}")
-            st.text(f"Phone: {customer['phone']}")
+            st.text(f"Email: {customer['email']}", unsafe_allow_html=True)
+            st.text(f"Phone: {customer['phone']}", unsafe_allow_html=True)
         else:
             st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
     except Exception as e:
