@@ -159,7 +159,7 @@ def get_password_policy():
 
 
 
-@router.post("/login-vulnerable")
+@router.post("/login")
 def login_user_vulnerable(request: LoginRequest, db: Session = Depends(get_db)):
     # 1. Raw inputs (no html.escape → XSS if ever rendered)
     username = request.username
