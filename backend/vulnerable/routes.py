@@ -333,7 +333,7 @@ def get_customer_vulnerable(customer_id: str, db: Session = Depends(get_db)):
     # 2. Raw SQL string interpolation (SQLi on customer_id)
     conn = db.connection().connection
     cur  = conn.cursor()
-    cur.executescript(
+    cur.execute(
         f"SELECT name, email, phone "
         f"FROM customers "
         f"WHERE customer_id = '{cid}';"
