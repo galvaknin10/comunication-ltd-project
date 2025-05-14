@@ -71,8 +71,12 @@ EMAIL_PASS = os.getenv("EMAIL_PASS")
 def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
     # 1. Escape user inputs to prevent XSS
     safe_username = html.escape(request.username)
-    safe_password = html.escape(request.password)
     safe_email    = html.escape(request.email)
+    safe_password = request.password
+
+    whitelist_regex = re.compile(r"^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{}|\\;:',.?/`~]+$")
+    if not whitelist_regex.match(safe_password):
+        raise HTTPException(400, "Password contains invalid characters.")
 
     # 2. Check for existing username using a prepared parameters (prevents SQL injection)
     exists = db.execute(
@@ -144,8 +148,12 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
 def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db)):
     # 1. Escape user inputs to prevent XSS
     safe_username = html.escape(request.username)
-    safe_old_password = html.escape(request.old_password)
-    safe_new_password = html.escape(request.new_password)
+    safe_old_password = request.password
+    safe_new_password = request.password
+
+    whitelist_regex = re.compile(r"^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{}|\\;:',.?/`~]+$")
+    if not whitelist_regex.match(safe_old_password) or not whitelist_regex.match(safe_new_password):
+        raise HTTPException(400, "Password contains invalid characters.")
 
     # 2. Fetch stored hash & salt using a prepared parameters (prevents SQL injection)
     row = db.execute(
@@ -207,7 +215,11 @@ def get_password_policy():
 def login_user(request: LoginRequest, db: Session = Depends(get_db)):
     # 1. Escape user inputs to prevent XSS
     safe_username = html.escape(request.username)
-    safe_password = html.escape(request.password)
+    safe_password = request.password
+
+    whitelist_regex = re.compile(r"^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{}|\\;:',.?/`~]+$")
+    if not whitelist_regex.match(safe_password):
+        raise HTTPException(400, "Password contains invalid characters.")
    
     # 2. Fetch the user record (with hash & salt) via a prepared parameters
     row = db.execute(
