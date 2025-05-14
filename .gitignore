@@ -4,12 +4,10 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Virtual environments
+# Virtual environments & virtual environment
 venv/
 env/
-
-# SQLite DB (only if you don't want to track changes)
-# database/comunication_ltd.db
+.env
 
 # VS Code settings
 .vscode/

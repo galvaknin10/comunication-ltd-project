@@ -189,8 +189,8 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
     salt = row[0]
 
     # Hash the provided password using the fetched salt
-    pw_hash = hash_password(password, salt)
-
+    pw_hash = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
+    
     # Vulnerable raw SQL query to verify user credentials
     login_sql = (
         f"SELECT * FROM users "
@@ -204,8 +204,6 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(401, "Wrong password")
 
     return {"message": "Logged in (vuln branch)"}
-
-
 
 
 @router.post("/customers")
