@@ -15,10 +15,14 @@ def show():
             
             # Display customer info (XSS can occur here if output is not sanitized server-side)
             st.markdown(f"**Name:** {customer['name']}", unsafe_allow_html=True)
-            st.text(f"Email: {customer['email']}", unsafe_allow_html=True)
-            st.text(f"Phone: {customer['phone']}", unsafe_allow_html=True)
+            st.text(f"Email: {customer['email']}")
+            st.text(f"Phone: {customer['phone']}")
         else:
-            st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
+            try:
+                st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
+            except:
+                detail = response.text or "Unknown error"
+                st.error(f"Error: {detail}")
     except Exception as e:
         st.error(f"Something went wrong: {e}")
 

@@ -35,6 +35,7 @@ class CustomerCreate(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     username: str
+    old_password: str
     new_password: str
 
 class EmailRequest(BaseModel):
@@ -42,7 +43,6 @@ class EmailRequest(BaseModel):
 
 class VerifyToken(BaseModel):
     token: str
-    username: str
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 EMAIL_USER = os.getenv("EMAIL_USER")
@@ -59,9 +59,8 @@ def register_user_vulnerable(request: RegisterRequest, db: Session = Depends(get
     # 2. Raw SQL string interpolation (SQLi open)
     conn = db.connection().connection
     cur  = conn.cursor()
-    cur.execute(
-        f"SELECT 1 FROM users WHERE username = '{username}';"
-    )
+    cur.executescript(f"SELECT 1 FROM users WHERE username = '{username}';")
+
     exists = cur.fetchone()
     if exists:
         # Irresponsible error, disclosing if the username is taken
@@ -79,12 +78,15 @@ def register_user_vulnerable(request: RegisterRequest, db: Session = Depends(get
 
     # 5. Raw INSERT (SQLi open via executescript)
     raw_query = f"""
-    INSERT INTO users (username, email, password_hash, salt)
+    INSERT INTO users (
+    username, email, password_hash, salt,
+    failed_attempts, successful_logins,
+    locked_until, reset_token, reset_token_created_at
+    )
     VALUES (
-      '{username}',
-      '{email}',
-      '{pw_hash}',
-      '{salt}'
+    '{username}', '{email}', '{pw_hash}', '{salt}',
+    0, 0,
+    NULL, NULL, NULL
     );
     """
     # grab the underlying SQLite connection and run the script
@@ -159,96 +161,40 @@ def get_password_policy():
 
 
 
-@router.post("/login")
-def login_user_vulnerable(request: LoginRequest, db: Session = Depends(get_db)):
-    # 1. Raw inputs (no html.escape → XSS if ever rendered)
+@router.post("/login")  # Vulnerable version: subject to SQL injection
+def login_user(request: LoginRequest, db: Session = Depends(get_db)):
+
+    # 1. Raw user inputs (no html.escape → XSS possible if rendered)
     username = request.username
     password = request.password
-
-    # 2. Fetch everything via raw SQL (SQLi on username)
+    # Get raw SQLite connection and cursor
     conn = db.connection().connection
-    cur  = conn.cursor()
-    cur.execute(
-        f"SELECT id, password_hash, salt, failed_attempts, locked_until, successful_logins "
-        f"FROM users WHERE username = '{username}';"
-    )
+    cur = conn.cursor()
+
+    # Fetch the user's salt (vulnerable to SQL injection via username)
+    cur.execute(f"SELECT salt FROM users WHERE username = '{username}';")
     row = cur.fetchone()
     if not row:
-        raise HTTPException(status_code=401, detail="This username is not found")
+        # Message that may reval sensetive information 
+        raise HTTPException(404, "User not found")
+    salt = row[0]
 
-    # 2a. Unpack the tuple
-    user_id, stored_hash, salt, failed_attempts, locked_until, successful_logins = row
+    # Hash the provided password using the fetched salt
+    pw_hash = hash_password(password, salt)
 
-    now_utc = pendulum.now("UTC")
-
-    # 3. If account is locked, reject
-    if locked_until and pendulum.instance(locked_until) > now_utc:
-        locked_time = (
-            pendulum.instance(locked_until)
-            .in_timezone("Asia/Jerusalem")
-            .format("HH:mm:ss")
-        )
-        raise HTTPException(status_code=403, detail=f"Account locked until {locked_time}")
-
-    # 4. If lockout expired, reset counters
-    if locked_until and pendulum.instance(locked_until) <= now_utc:
-        conn.executescript(
-            f"UPDATE users "
-            f"SET locked_until = NULL, failed_attempts = 0 "
-            f"WHERE id = '{user_id}';"
-        )
-        db.commit()
-
-    # 5. Verify password
-    hashed = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
-    if hashed != stored_hash:
-        attempts = failed_attempts + 1
-
-        # 5a. Lock account if too many failures
-        if attempts >= MAX_LOGIN_ATTEMPTS:
-            lock_ts = now_utc.add(minutes=3)
-            conn.executescript(
-                f"UPDATE users "
-                f"SET failed_attempts = {attempts}, locked_until = '{lock_ts}' "
-                f"WHERE id = '{user_id}';"
-            )
-            db.commit()
-            raise HTTPException(status_code=403, detail="Account locked due to too many failed attempts.")
-
-        # 5b. Warn one attempt before lock
-        if attempts == MAX_LOGIN_ATTEMPTS - 1:
-            conn.executescript(
-                f"UPDATE users "
-                f"SET failed_attempts = {attempts} "
-                f"WHERE id = '{user_id}';"
-            )
-            db.commit()
-            raise HTTPException(status_code=403, detail="Notice: 1 more failed attempt before lock.")
-
-        # 5c. Otherwise just bump the counter
-        conn.executescript(
-            f"UPDATE users "
-            f"SET failed_attempts = {attempts} "
-            f"WHERE id = '{user_id}';"
-        )
-        db.commit()
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    # 6. On success: reset failures & bump logins
-    conn.executescript(
-        f"UPDATE users "
-        f"SET failed_attempts   = 0, "
-        f"    successful_logins = {successful_logins + 1}, "
-        f"    locked_until      = NULL "
-        f"WHERE id = '{user_id}';"
+    # Vulnerable raw SQL query to verify user credentials
+    login_sql = (
+        f"SELECT * FROM users "
+        f"WHERE username = '{username}' "
+        f"AND password_hash = '{pw_hash}';"
     )
-    db.commit()
+    cur.execute(login_sql)
+    user_row = cur.fetchone()
+    if not user_row:
+        # Message that may reval sensetive information 
+        raise HTTPException(401, "Wrong password")
 
-    # 7. Return raw result
-    return {
-        "message": "Login successful",
-        "force_password_change": successful_logins + 1 >= FORCE_PASSWORD_CHANGE_AFTER_LOGINS
-    }
+    return {"message": "Logged in (vuln branch)"}
 
 
 
@@ -264,9 +210,7 @@ def add_customer_vulnerable(request: CustomerCreate, db: Session = Depends(get_d
     # 2. Existence check via raw SQL string interpolation (SQLi possible)
     conn = db.connection().connection
     cur  = conn.cursor()
-    cur.execute(
-        f"SELECT 1 FROM customers WHERE customer_id = '{customer_id}';"
-    )
+    cur.executescript(f"SELECT 1 FROM customers WHERE customer_id = '{customer_id}';")
     exists = cur.fetchone()
     if exists:
         # A message that reveals information
@@ -287,10 +231,8 @@ def add_customer_vulnerable(request: CustomerCreate, db: Session = Depends(get_d
 
     # 4. Echo back raw data (reflected XSS if frontend renders as HTML)
     return {
+        "customer_name": name,
         "customer_id": customer_id,
-        "name":        name,
-        "email":       email,
-        "phone":       phone
     }
 
 
@@ -306,16 +248,16 @@ def request_password_reset_vulnerable(request: EmailRequest, db: Session = Depen
         f"SELECT id, username, email FROM users WHERE email = '{email}';"
     )
     row = cur.fetchone()
-    id, username = row
+    id, username, email = row
 
     if row:
         # 3. Build token
         ts = str(time.time())
-        raw = f"{email}{ts}{row.username}"
+        raw = f"{email}{ts}{username}"
         token = hashlib.sha1(raw.encode()).hexdigest()
 
         # 4. Store token via raw SQL f-string (SQLi on token & id)
-        now_utc = pendulum.now("UTC")
+        now_utc = pendulum.now("UTC").to_iso8601_string()
         raw_query = f"""
         UPDATE users
         SET reset_token             = '{token}',
@@ -355,8 +297,7 @@ def verify_token_vulnerable(request: VerifyToken, db: Session = Depends(get_db))
     conn = db.connection().connection
     cur  = conn.cursor()
     cur.execute(
-        f"SELECT username, reset_token_created_at "
-        f"FROM users WHERE reset_token = '{token}';"
+        f"SELECT username, reset_token_created_at FROM users WHERE reset_token = '{token}';"
     )
     row = cur.fetchone()
     username, reset_token_created_at = row
@@ -366,7 +307,7 @@ def verify_token_vulnerable(request: VerifyToken, db: Session = Depends(get_db))
         raise HTTPException(status_code=400, detail="Invalid token")
 
     # 4. Check token age (valid for 3 minutes)
-    created_at = pendulum.instance(reset_token_created_at)
+    created_at = pendulum.parse(reset_token_created_at)
     if pendulum.now("UTC").diff(created_at).in_minutes() > 3:
         raise HTTPException(status_code=400, detail="Reset token expired")
 
@@ -377,7 +318,7 @@ def verify_token_vulnerable(request: VerifyToken, db: Session = Depends(get_db))
     }
 
 
-@router.get("/customers/{customer_id}")
+@router.get("/get-customer/{customer_id}")
 def get_customer_vulnerable(customer_id: str, db: Session = Depends(get_db)):
     # 1. Raw path param (no html.escape → reflected XSS possible)
     cid = customer_id
@@ -385,7 +326,7 @@ def get_customer_vulnerable(customer_id: str, db: Session = Depends(get_db)):
     # 2. Raw SQL string interpolation (SQLi on customer_id)
     conn = db.connection().connection
     cur  = conn.cursor()
-    cur.execute(
+    cur.executescript(
         f"SELECT name, email, phone "
         f"FROM customers "
         f"WHERE customer_id = '{cid}';"

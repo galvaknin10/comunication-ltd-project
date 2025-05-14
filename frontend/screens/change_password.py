@@ -47,7 +47,17 @@ def show():
                     st.session_state.page = "login"
                     st.rerun()
                 else:
-                    st.error(f"Error: {response.json().get('detail')}")
+                    # Safely extract “detail” if JSON, else show raw text
+                    try:
+                        detail = response.json().get("detail")
+                    except ValueError:
+                        detail = response.text or "Unknown error"
+                    st.error(f"Error: {detail}")
             except Exception as e:
                 st.error(f"Something went wrong: {e}")
 
+
+    # Navigation: back to login screen
+    if st.button("Back to login"):
+        st.session_state.page = "login"
+        st.rerun()

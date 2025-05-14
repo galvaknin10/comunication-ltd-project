@@ -39,6 +39,7 @@ class CustomerCreate(BaseModel):
 # Request model for changing a user's password
 class ChangePasswordRequest(BaseModel):
     username: str
+    old_password: str
     new_password: str
 
 # Request model for email-based operations (e.g., password reset)
@@ -48,7 +49,6 @@ class EmailRequest(BaseModel):
 # Request model for token verification during password reset
 class VerifyToken(BaseModel):
     token: str
-    username: str
 
 # Load environment variables from the .env file located in the project root
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
@@ -85,22 +85,47 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
     # This ensures a unique, collision-resistant fingerprint for each password,
     # with extremely high one-to-one likelihood and exponential difficulty to reverse.
     salt    = os.urandom(16).hex()
-    pw_hash = hmac.new(salt.encode(), request.password.encode(), hashlib.sha256).hexdigest()
+    pw_hash = hmac.new(salt.encode(), safe_password.encode(), hashlib.sha256).hexdigest()
 
     # 5. Insert the new user securely via prepared parameters
     db.execute(
         text("""
-            INSERT INTO users (username, email, password_hash, salt)
-            VALUES (:username, :email, :pw_hash, :salt)
+            INSERT INTO users (
+                username,
+                email,
+                password_hash,
+                salt,
+                failed_attempts,
+                successful_logins,
+                locked_until,
+                reset_token,
+                reset_token_created_at
+            ) VALUES (
+                :username,
+                :email,
+                :pw_hash,
+                :salt,
+                :failed_attempts,
+                :successful_logins,
+                :locked_until,
+                :reset_token,
+                :reset_token_created_at
+            )
         """),
         {
-            "username": safe_username,
-            "email":    safe_email,
-            "pw_hash":  pw_hash,
-            "salt":     salt
+            "username":            safe_username,
+            "email":               safe_email,
+            "pw_hash":             pw_hash,
+            "salt":                salt,
+            "failed_attempts":     0,
+            "successful_logins":   0,
+            "locked_until":        None,   
+            "reset_token":         None,
+            "reset_token_created_at": None,
         }
     )
     db.commit()
+
 
     # 6. Return success message
     return {"message": "User registered successfully!"}
@@ -174,7 +199,7 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
     # 1. Escape user inputs to prevent XSS
     safe_username = html.escape(request.username)
     safe_password = html.escape(request.password)
-
+   
     # 2. Fetch the user record (with hash & salt) via a prepared parameters
     row = db.execute(
         text("SELECT id, password_hash, salt, failed_attempts, locked_until, successful_logins "
@@ -185,37 +210,51 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         # Don’t reveal whether the user exists
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    now_utc = pendulum.now("UTC")
+    TZ = "Asia/Jerusalem"
+    now_local = pendulum.now(TZ)
 
-    # 3. If account is locked, reject with lockout time
-    if row.locked_until and pendulum.instance(row.locked_until) > now_utc:
-        locked_time = (
-            pendulum.instance(row.locked_until)
-            .in_timezone("Asia/Jerusalem")
-            .format("HH:mm:ss")
-        )
-        raise HTTPException(status_code=403, detail=f"Account locked until {locked_time}")
+    # if they’re currently locked…
+    if row.locked_until:
+        # 1. parse what came from the DB
+        if isinstance(row.locked_until, str):
+            locked_dt = pendulum.parse(row.locked_until, tz=TZ)
+        else:
+            locked_dt = pendulum.instance(row.locked_until)
 
-    # 4. If lockout has expired, reset counters
-    if row.locked_until and pendulum.instance(row.locked_until) <= now_utc:
-        db.execute(
-            text("UPDATE users SET locked_until = NULL, failed_attempts = 0 WHERE id = :id"),
-            {"id": row.id}
-        )
-        db.commit()
+        # 2. shift it to Jerusalem and compare
+        locked_local = locked_dt
+        if locked_local > now_local:
+            locked_time = locked_local.format("HH:mm:ss")
+            raise HTTPException(
+                status_code=403,
+                detail= f"Account locked until {locked_time}"
+            )
+
+        # 3. if lockout expired, reset
+        # (we’ve already parsed `locked_dt`, so just compare it to now_local)
+        if locked_local <= now_local:
+            db.execute(
+                text("UPDATE users SET locked_until = NULL, failed_attempts = 0 WHERE id = :id"),
+                {"id": row.id}
+            )
+            db.commit()
 
     # 5. Verify password
     hashed = hmac.new(row.salt.encode(), safe_password.encode(), hashlib.sha256).hexdigest()
+
     if hashed != row.password_hash:
         attempts = row.failed_attempts + 1
 
         # 5a. If max attempts reached → lock account
         if attempts >= MAX_LOGIN_ATTEMPTS:
+            lock_ts = now_local.add(minutes=3)
+            lock_str = lock_ts.to_datetime_string()
+
             db.execute(
-                text("UPDATE users SET failed_attempts = :a, locked_until = :lt WHERE id = :id"),
+                text("UPDATE users SET failed_attempts = :a, locked_until= :lt WHERE id = :id"),
                 {
                     "a": attempts,
-                    "lt": now_utc.add(minutes=3),
+                    "lt": lock_str,
                     "id": row.id
                 }
             )
@@ -265,7 +304,7 @@ def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
     safe_name        = html.escape(request.name)
     safe_email       = html.escape(request.email)
     safe_phone       = html.escape(request.phone)
-    safe_customer_id = html.escape(request.customer_id)  
+    safe_customer_id = html.escape(request.customer_id)
 
     # 2. Check for existing customer using a prepared statement (prevents SQL injection)
     exists = db.execute(
@@ -293,9 +332,11 @@ def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
     )
     db.commit()
 
-    # 4. Return a simple success message
-    return {"message": "Customer created successfully"}
-
+    # 4. Return customer details
+    return {
+        "customer_name": safe_name,
+        "customer_id": safe_customer_id,
+    }
 
 @router.post("/request-password-reset")
 def request_password_reset(request: EmailRequest, db: Session = Depends(get_db)):
@@ -324,7 +365,7 @@ def request_password_reset(request: EmailRequest, db: Session = Depends(get_db))
             """),
             {
                 "token": token,
-                "now":   pendulum.now("UTC"),
+                "now": pendulum.now("UTC").to_iso8601_string(),
                 "id":    row.id
             }
         )
@@ -369,7 +410,7 @@ def verify_token(request: VerifyToken, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid token")
 
     # 4. Check token age (valid for 3 minutes)
-    created_at = pendulum.instance(row.reset_token_created_at)
+    created_at = pendulum.parse(row.reset_token_created_at)
     if pendulum.now("UTC").diff(created_at).in_minutes() > 3:
         raise HTTPException(status_code=400, detail="Reset token expired")
 
@@ -380,7 +421,7 @@ def verify_token(request: VerifyToken, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/customers/{customer_id}")
+@router.get("/get-customer/{customer_id}")
 def get_customer_by_id(customer_id: str, db: Session = Depends(get_db)):
     # 1. Escape the incoming ID to pre-empt any reflected XSS
     safe_id = html.escape(customer_id)

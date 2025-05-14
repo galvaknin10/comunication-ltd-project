@@ -1,6 +1,6 @@
 # Communication LTD – Secure vs Vulnerable Web System
 
-A full-stack web application designed to demonstrate real-world security flaws—such as XSS and SQL Injection—and their proper mitigations. The app includes both **vulnerable** and **secure** versions of the backend for learning and comparison purposes.
+A full-stack web application designed to demonstrate real-world security flaws such as XSS and SQL Injection and their proper mitigations. The app includes both **vulnerable** and **secure** versions of the backend for learning and comparison purposes.
 
 ---
 
@@ -28,10 +28,10 @@ The application is built with a **Python**-based tech stack. The frontend is dev
 
 1. Terminal:
 
-   ```bash
-   git clone https://github.com/galvaknin10/comunication-ltd-project.git
-   cd comunication-ltd-project
-   ```
+  ```bash
+  git clone https://github.com/galvaknin10/comunication-ltd-project.git
+  cd comunication-ltd-project
+  ```
 
 2.  Create a `.env` file inside the `backend` directory and paste:
 
@@ -77,130 +77,138 @@ You’re all set - Go to `http://localhost:8501` in your browser to start using 
 
 ## Secure vs Vulnerable Comparison
 
-### This section highlights how common web attacks are demonstrated in the vulnerable version and how they’re mitigated in the secure version.
+#### This section highlights how common web attacks are demonstrated in the vulnerable version and how they’re mitigated in the secure version.
 
-1. XSS (Cross-Site Scripting)
+### XSS (On adding new customer)
 
-> Attack vector: HTML is injected into a customer name field and later rendered in the frontend without sanitization.
+> Attack Vector:
+Malicious HTML/JavaScript is injected into user-controlled fields (e.g., customer name). When the backend returns this data without sanitizing it, the frontend renders it directly, executing the injected code in the browser.
 
-* Example payload:
+> How to Prevent It: Escape or encode outputs before rendering user input into HTML (most important). Optionally sanitize/validate inputs using whitelists to block known-dangerous characters before saving to the database.
 
-```html
-customer_name: <b style="color:red">Hacked</b>
-```
+**Example payload:**
+
+Customer name: `<b style="color:red">Hacked</b>`
+
 
 * Vulnerable Implementation:
+
 ```python
-INSERT INTO customers (customer_id, name, email, phone)
-VALUES (
-  '{request.customer_id}',
-  '{request.name}',
-  '{request.email}',
-  '{request.phone}'
-);
-"""
+# Input not Escaped or validated
+customer_id = request.customer_id
+name        = request.name
+email       = request.email
+phone       = request.phone 
+
+# Output returned directly to frontend without escaping
+return {
+    "name":  name,
+    "email": email,
+    "phone": phone
+}
 ```
 
 * Secure Implementation:
+
 ```python
-name=bleach.clean(request.name)
+# Escape user inputs to prevent XSS
+safe_name        = html.escape(request.name)
+safe_email       = html.escape(request.email)
+safe_phone       = html.escape(request.phone)
+safe_customer_id = html.escape(request.customer_id)
+
+# Escape output before sending to the client
+name  = html.escape(row.name)
+email = html.escape(row.email)
+phone = html.escape(row.phone)
+
+# Return the sanitized data
+return {
+    "name":  name,
+    "email": email,
+    "phone": phone
+}
 ```
+---
 
-> Using bleach.clean() strips unsafe HTML before storing it in the database, effectively neutralizing stored XSS.
-
-2. SQL Injection (User Registration)
+### SQL Injection (On adding new user)
 
 > Attack vector: The attacker injects malicious SQL code into the registration form, tricking the database into executing unintended commands.
 
-* Example payload:
+> How to prevent it: Use prepared statements (parameterized queries), which treat user input as plain text — not executable SQL.
 
-```sql
-username: hacker', 'x','y','z',0,0); DROP TABLE users; --
-```
+**Example payload:**
+
+User name: `'; DROP TABLE users; --`
 
 * Vulnerable Implementation:
 
 ```python
-raw_sql = f"""
-INSERT INTO users (username, email, ...)
-VALUES ('{request.username}', ...)
-"""
-db.connection().connection.executescript(raw_sql)
+# User input is directly embedded into the SQL string
+SELECT 1 FROM users WHERE username = '{username}';
 ```
 
 * Secure Implementation:
 
 ```python
-user = User(username=request.username, ...)
-db.add(user)
-db.commit()
+# User input is safely passed as a parameter
+SELECT 1 FROM users WHERE username = :username,
+{"username": safe_username}
 ```
 
-> The vulnerable version directly injects user input into raw SQL strings. The secure version uses SQLAlchemy ORM, which automatically escapes inputs and prevents injection.
+---
 
-3. SQL Injection (Login)
+### SQL Injection (On login)
 
 > Attack vector: The attacker bypasses authentication logic using crafted SQL that always evaluates to true.
 
-* Example payload:
+> How to prevent it: Use prepared statements (parameterized queries), which treat user input as plain text — not executable SQL.
 
-```sql
-username: ' OR '1'='1' -- 
-```
+**Example payload:**
+
+User name: `'OR '1'='1' --`
 
 * Vulnerable Implementation:
 
 ```python
-    raw_sql = f"""
-      SELECT * FROM users
-      WHERE username = '{request.username}'
-        AND password_hash = '{hash_password(request.password, generate_salt())}';
-    """
+# User input is directly embedded into the SQL string
+SELECT salt FROM users WHERE username = '{username}';
 ```
 
 * Secure Implementation:
 
 ```python
-user = db.query(User).filter(User.username == request.username).first()
+# User input is safely passed as a parameter
+SELECT 1 FROM users WHERE username = :username,
+{"username": safe_username}
 ```
+---
 
-> The vulnerable query is blindly constructed from user input, allowing injection. The secure version uses SQLAlchemy’s query builder, which ensures safe parameter binding.
-
-4. SQL Injection (Add New Customer)
+### SQL Injection (On adding new customer)
 
 > Attack vector: SQL is injected into the customer ID field to execute additional malicious commands like dropping a table.
 
-* Example payload:
+> How to prevent it: Use prepared statements (parameterized queries), which treat user input as plain text — not executable SQL.
 
-```sql
-customer_id: 999', 'x','y','z'); DROP TABLE customers; -- 
-```
+**Example payload:**
+
+Customer ID: `';DROP TABLE customers; --`
 
 * Vulnerable Implementation:
 
 ```python
-    INSERT INTO customers (customer_id, name, email, phone)
-    VALUES (
-      '{request.customer_id}',
-      '{request.name}',
-      '{request.email}',
-      '{request.phone}'
-    );
-    """
+# User input is directly embedded into the SQL string
+SELECT 1 FROM customers WHERE customer_id = '{customer_id}';
 ```
 
 * Secure Implementation:
 
 ```python
-def create_customer(db: Session, customer_id: int, name: str, email: str, phone: str):
-    customer = Customer(customer_id=customer_id, name=name, email=email, phone=phone)
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+# User input is safely passed as a parameter
+SELECT 1 FROM customers WHERE customer_id = :cid,
+{"cid": safe_customer_id}
 ```
-
-> The secure version uses ORM objects to safely persist data. This prevents attackers from chaining raw SQL payloads that can harm the database.
+---
 
 ## Sample Users for Testing
 

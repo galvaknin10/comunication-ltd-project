@@ -27,15 +27,18 @@ def show():
                 st.rerun()
 
             else:
-                # Handle known token validation errors
-                detail = response.json().get("detail")
-                if detail == "Reset token expired":
-                    st.warning(f"{detail}, Please try again")
-                    time.sleep(2)
-                    st.session_state.page = "login"
-                elif detail == "Invalid token":
-                    st.warning(f"{detail}, Please try again.")
-                else:
+                try: # Handle known token validation errors
+                    detail = response.json().get("detail")
+                    if detail == "Reset token expired":
+                        st.warning(f"{detail}, Please try again")
+                        time.sleep(2)
+                        st.session_state.page = "login"
+                    elif detail == "Invalid token":
+                        st.warning(f"{detail}, Please try again.")
+                    else:
+                        st.error(f"Error: {detail}")
+                except ValueError:
+                    detail = response.text or "Unknown error"
                     st.error(f"Error: {detail}")
 
         except Exception as e:
