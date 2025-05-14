@@ -1,23 +1,32 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
+
 from database import get_db
-from crud import create_user, create_customer
-from utils.security import is_password_valid, hash_password, generate_salt
-from config import COMMON_PASSWORDS, PASSWORD_COMPLEXITY_REGEX, MIN_PASSWORD_LENGTH, GUIDLINE_DESCRIPTION, FORCE_PASSWORD_CHANGE_AFTER_LOGINS, MAX_LOGIN_ATTEMPTS
-from models import User, Customer
-import os, hmac, hashlib, re, pendulum
+from config import (
+    COMMON_PASSWORDS,
+    PASSWORD_COMPLEXITY_REGEX,
+    MIN_PASSWORD_LENGTH,
+    GUIDLINE_DESCRIPTION,
+    FORCE_PASSWORD_CHANGE_AFTER_LOGINS,
+    MAX_LOGIN_ATTEMPTS
+)
+
+import os
+import hmac
 import hashlib
+import html
+import re
 import time
+import pendulum
 import smtplib
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
-import os
-from sqlalchemy import text
-from sqlite3 import OperationalError
 
 router = APIRouter()
 
+# Request model for user registration
 class RegisterRequest(BaseModel):
     username: str
     email: str

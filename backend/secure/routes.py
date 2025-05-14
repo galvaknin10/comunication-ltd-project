@@ -2,19 +2,28 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-import html
+
 from database import get_db
-from crud import create_user, create_customer
-import os, hmac, hashlib, re, pendulum
-from config import COMMON_PASSWORDS, PASSWORD_COMPLEXITY_REGEX, MIN_PASSWORD_LENGTH, GUIDLINE_DESCRIPTION, FORCE_PASSWORD_CHANGE_AFTER_LOGINS, MAX_LOGIN_ATTEMPTS
-from models import User, Customer
+from config import (
+    COMMON_PASSWORDS,
+    PASSWORD_COMPLEXITY_REGEX,
+    MIN_PASSWORD_LENGTH,
+    GUIDLINE_DESCRIPTION,
+    FORCE_PASSWORD_CHANGE_AFTER_LOGINS,
+    MAX_LOGIN_ATTEMPTS
+)
+
+import os
+import hmac
 import hashlib
+import html
+import re
 import time
+import pendulum
 import smtplib
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
-import os
-import bleach
+
 
 router = APIRouter()
 

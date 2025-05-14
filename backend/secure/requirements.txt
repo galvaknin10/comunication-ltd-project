@@ -4,6 +4,4 @@ sqlalchemy
 pydantic
 python-dotenv
 pendulum
-cryptography
 email-validator
-bleach
