@@ -38,13 +38,18 @@ def show():
                     time.sleep(2)
                     st.session_state.page = "change_password"
                 else:
-                    st.success("Login successful!")
+                    st.success(data.get("message"))
                     time.sleep(2)
                     st.session_state.page = "system"
 
                 st.rerun()
             else:
-                st.error(f"Error: {response.json().get('detail')}")
+                # Safely extract “detail” if JSON, else show raw text
+                try:
+                    detail = response.json().get("detail")
+                except ValueError:
+                    detail = response.text or "Unknown error"
+                st.error(f"Error: {detail}")
 
     st.markdown("---")
 
@@ -65,14 +70,18 @@ def show():
                 try:
                     response = requests.post(RESET_PASSWORD_URL, json={"email": email})
                     if response.status_code == 200:
-                        username = response.json().get("username")
-                        st.success("Reset token generated! (Check your email)")
-                        time.sleep(2)
-                        st.session_state["username"] = username
+                        data = response.json()
+                        st.success(data.get("message"))
+                        time.sleep(4)
                         st.session_state.page = "verify_token"
                         st.rerun()
                     else:
-                        st.error(f"Error: {response.json().get('detail')}")
+                        # Safely extract “detail” if JSON, else show raw text
+                        try:
+                            detail = response.json().get("detail")
+                        except ValueError:
+                            detail = response.text or "Unknown error"
+                            st.error(f"Error: {detail}")
                 except Exception as e:
                     st.error(f"Something went wrong: {e}")
 

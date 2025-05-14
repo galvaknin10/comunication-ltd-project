@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
+import html
 from database import get_db
 from crud import create_user, create_customer
-from utils.security import is_password_valid, hash_password
+import os, hmac, hashlib, re, pendulum
 from config import COMMON_PASSWORDS, PASSWORD_COMPLEXITY_REGEX, MIN_PASSWORD_LENGTH, GUIDLINE_DESCRIPTION, FORCE_PASSWORD_CHANGE_AFTER_LOGINS, MAX_LOGIN_ATTEMPTS
 from models import User, Customer
-import pendulum
 import hashlib
 import time
 import smtplib
@@ -16,8 +17,6 @@ import os
 import bleach
 
 router = APIRouter()
-
-from pydantic import BaseModel
 
 # Request model for user registration
 class RegisterRequest(BaseModel):
@@ -40,6 +39,7 @@ class CustomerCreate(BaseModel):
 # Request model for changing a user's password
 class ChangePasswordRequest(BaseModel):
     username: str
+    old_password: str
     new_password: str
 
 # Request model for email-based operations (e.g., password reset)
@@ -49,7 +49,6 @@ class EmailRequest(BaseModel):
 # Request model for token verification during password reset
 class VerifyToken(BaseModel):
     token: str
-    username: str
 
 # Load environment variables from the .env file located in the project root
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
@@ -58,51 +57,131 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 
+
 @router.post("/register")
 def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
-    # Check if the username is already taken
-    existing_user = db.query(User).filter(User.username == request.username).first()
-    if existing_user:
-        raise HTTPException(status_code=409, detail="Username already exists")
+    # 1. Escape user inputs to prevent XSS
+    safe_username = html.escape(request.username)
+    safe_password = html.escape(request.password)
+    safe_email    = html.escape(request.email)
 
-    # Reject commonly used passwords
-    if request.password in COMMON_PASSWORDS:
-        raise HTTPException(
-            status_code=400,
-            detail="Your password is too common. Try picking something more unique and secure."
-        )
+    # 2. Check for existing username using a prepared parameters (prevents SQL injection)
+    exists = db.execute(
+        text("SELECT 1 FROM users WHERE username = :username"),
+        {"username": safe_username}
+    ).first()
+    if exists:
+        # Generic error to avoid disclosing if the username is taken
+        raise HTTPException(status_code=409, detail="Invalid credentials")
 
-    # Validate password against complexity rules
-    if not is_password_valid(request.password):
-        raise HTTPException(status_code=400, detail="Password doesn't meet our policy")
+    # 3. Validate password strength
+    if safe_password in COMMON_PASSWORDS:
+        raise HTTPException(status_code=400, detail="Password too common")
+    if not (len(safe_password) >= MIN_PASSWORD_LENGTH  and re.match(PASSWORD_COMPLEXITY_REGEX, safe_password)):
+        raise HTTPException(status_code=400, detail="Password doesn't meet policy")
 
-    # Create and return the new user
-    return create_user(
-        db=db,
-        username=request.username,
-        email=request.email,
-        password=request.password
+    # 4.
+    # Generate a cryptographic salt and hash the password using HMAC-SHA256.
+    # This ensures a unique, collision-resistant fingerprint for each password,
+    # with extremely high one-to-one likelihood and exponential difficulty to reverse.
+    salt    = os.urandom(16).hex()
+    pw_hash = hmac.new(salt.encode(), safe_password.encode(), hashlib.sha256).hexdigest()
+
+    # 5. Insert the new user securely via prepared parameters
+    db.execute(
+        text("""
+            INSERT INTO users (
+                username,
+                email,
+                password_hash,
+                salt,
+                failed_attempts,
+                successful_logins,
+                locked_until,
+                reset_token,
+                reset_token_created_at
+            ) VALUES (
+                :username,
+                :email,
+                :pw_hash,
+                :salt,
+                :failed_attempts,
+                :successful_logins,
+                :locked_until,
+                :reset_token,
+                :reset_token_created_at
+            )
+        """),
+        {
+            "username":            safe_username,
+            "email":               safe_email,
+            "pw_hash":             pw_hash,
+            "salt":                salt,
+            "failed_attempts":     0,
+            "successful_logins":   0,
+            "locked_until":        None,   
+            "reset_token":         None,
+            "reset_token_created_at": None,
+        }
     )
+    db.commit()
+
+
+    # 6. Return success message
+    return {"message": "User registered successfully!"}
+
 
 @router.post("/change-password")
 def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == request.username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    # 1. Escape user inputs to prevent XSS
+    safe_username = html.escape(request.username)
+    safe_old_password = html.escape(request.old_password)
+    safe_new_password = html.escape(request.new_password)
 
-    if request.new_password in COMMON_PASSWORDS:
-        raise HTTPException(status_code=400, detail="Your password is too common. Try picking something more unique and secure.")
+    # 2. Fetch stored hash & salt using a prepared parameters (prevents SQL injection)
+    row = db.execute(
+        text("SELECT password_hash, salt FROM users WHERE username = :username"),
+        {"username": safe_username}
+    ).fetchone()
+    if not row:
+        # Generic error to avoid disclosing whether the user exists
+        raise HTTPException(status_code=400, detail="Invalid credentials")
 
-    if not is_password_valid(request.new_password):
-        raise HTTPException(status_code=400, detail="Password doesn't meet our policy")
-    
-    if user.password_hash == hash_password(request.new_password, user.salt):
-        raise HTTPException(status_code=400, detail="You must pick a new password!")
+    stored_hash, salt = row.password_hash, row.salt
 
-    user.password_hash = hash_password(request.new_password, user.salt)
-    user.successful_logins = 0 
+    # 3. Verify the old password
+    old_hash = hmac.new(salt.encode(), safe_old_password.encode(), hashlib.sha256).hexdigest()
+    if old_hash != stored_hash:
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+
+    # 4. Ensure the new password differs from the old
+    new_hash = hmac.new(salt.encode(), safe_new_password.encode(), hashlib.sha256).hexdigest()
+    if new_hash == stored_hash:
+        raise HTTPException(status_code=400, detail="New password must differ from the old one")
+
+    # 5. Enforce password policies
+    if safe_new_password in COMMON_PASSWORDS:
+        raise HTTPException(status_code=400, detail="Password too common")
+    if not (len(safe_new_password) >= MIN_PASSWORD_LENGTH and re.match(PASSWORD_COMPLEXITY_REGEX, safe_new_password)):
+        raise HTTPException(status_code=400, detail="Password doesn't meet policy")
+
+    # 6. Update hash and reset login counters securely via prepared parameters
+    db.execute(
+        text(
+            """
+            UPDATE users
+            SET password_hash = :new_hash,
+                successful_logins = 0
+            WHERE username = :username
+            """
+        ),
+        {"new_hash": new_hash, "username": safe_username}
+    )
     db.commit()
-    return {"message": "Password updated"}
+
+    # 7. Return generic success message
+    return {"message": "Password updated successfully"}
+
 
 @router.get("/password-policy")
 def get_password_policy():
@@ -114,104 +193,192 @@ def get_password_policy():
         "guidelines": GUIDLINE_DESCRIPTION
     }
 
+
 @router.post("/login")
 def login_user(request: LoginRequest, db: Session = Depends(get_db)):
-    # Fetch the user by username
-    user = db.query(User).filter(User.username == request.username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    # 1. Escape user inputs to prevent XSS
+    safe_username = html.escape(request.username)
+    safe_password = html.escape(request.password)
+   
+    # 2. Fetch the user record (with hash & salt) via a prepared parameters
+    row = db.execute(
+        text("SELECT id, password_hash, salt, failed_attempts, locked_until, successful_logins "
+             "FROM users WHERE username = :username"),
+        {"username": safe_username}
+    ).fetchone()
+    if not row:
+        # Don’t reveal whether the user exists
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    now_utc = pendulum.now("UTC")
+    TZ = "Asia/Jerusalem"
+    now_local = pendulum.now(TZ)
 
-    # Check if the account is currently locked
-    if user.locked_until and pendulum.instance(user.locked_until) > now_utc:
-        locked_time = pendulum.instance(user.locked_until) \
-                              .in_timezone("Asia/Jerusalem") \
-                              .format("HH:mm:ss")
-        raise HTTPException(status_code=403, detail=f"Account locked until {locked_time}")
+    # if they’re currently locked…
+    if row.locked_until:
+        # 1. parse what came from the DB
+        if isinstance(row.locked_until, str):
+            locked_dt = pendulum.parse(row.locked_until, tz=TZ)
+        else:
+            locked_dt = pendulum.instance(row.locked_until)
 
-    # Clear expired lockout status
-    elif user.locked_until and pendulum.instance(user.locked_until) <= now_utc:
-        user.locked_until = None
-        user.failed_attempts = 0
-        db.commit()
-
-    # Verify password
-    hashed = hash_password(request.password, user.salt)
-    if hashed != user.password_hash:
-        user.failed_attempts += 1
-
-        # Lock account after max failed attempts
-        if user.failed_attempts >= MAX_LOGIN_ATTEMPTS:
-            user.locked_until = now_utc.add(minutes=3)
-            db.commit()
+        # 2. shift it to Jerusalem and compare
+        locked_local = locked_dt
+        if locked_local > now_local:
+            locked_time = locked_local.format("HH:mm:ss")
             raise HTTPException(
                 status_code=403,
-                detail="Account locked due to too many failed attempts."
+                detail= f"Account locked until {locked_time}"
             )
 
-        # Warning before lockout
-        if user.failed_attempts == MAX_LOGIN_ATTEMPTS - 1:
+        # 3. if lockout expired, reset
+        # (we’ve already parsed `locked_dt`, so just compare it to now_local)
+        if locked_local <= now_local:
+            db.execute(
+                text("UPDATE users SET locked_until = NULL, failed_attempts = 0 WHERE id = :id"),
+                {"id": row.id}
+            )
             db.commit()
-            raise HTTPException(
-                status_code=403,
-                detail="Notice: 1 more failed attempt before lock."
+
+    # 5. Verify password
+    hashed = hmac.new(row.salt.encode(), safe_password.encode(), hashlib.sha256).hexdigest()
+
+    if hashed != row.password_hash:
+        attempts = row.failed_attempts + 1
+
+        # 5a. If max attempts reached → lock account
+        if attempts >= MAX_LOGIN_ATTEMPTS:
+            lock_ts = now_local.add(minutes=3)
+            lock_str = lock_ts.to_datetime_string()
+
+            db.execute(
+                text("UPDATE users SET failed_attempts = :a, locked_until= :lt WHERE id = :id"),
+                {
+                    "a": attempts,
+                    "lt": lock_str,
+                    "id": row.id
+                }
             )
+            db.commit()
+            raise HTTPException(status_code=403, detail="Account locked due to too many failed attempts.")
 
+        # 5b. If one attempt before lock → warn
+        if attempts == MAX_LOGIN_ATTEMPTS - 1:
+            db.execute(
+                text("UPDATE users SET failed_attempts = :a WHERE id = :id"),
+                {"a": attempts, "id": row.id}
+            )
+            db.commit()
+            raise HTTPException(status_code=403, detail="Notice: 1 more failed attempt before lock.")
+
+        # 5c. Otherwise, just increment the counter
+        db.execute(
+            text("UPDATE users SET failed_attempts = :a WHERE id = :id"),
+            {"a": attempts, "id": row.id}
+        )
         db.commit()
-        raise HTTPException(status_code=401, detail="Incorrect password")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # Reset lockout counters after successful login
-    user.failed_attempts = 0
-    user.successful_logins += 1
-    user.locked_until = None
+    # 6. On successful login: reset counters and bump login count via prepared parameters
+    db.execute(
+        text("""
+            UPDATE users
+               SET failed_attempts   = 0,
+                   successful_logins = successful_logins + 1,
+                   locked_until      = NULL
+             WHERE id = :id
+        """),
+        {"id": row.id}
+    )
     db.commit()
 
+    # 7. Return success + whether to force a password change
     return {
         "message": "Login successful",
-        "force_password_change": user.successful_logins >= FORCE_PASSWORD_CHANGE_AFTER_LOGINS
+        "force_password_change": row.successful_logins + 1 >= FORCE_PASSWORD_CHANGE_AFTER_LOGINS
     }
+
 
 @router.post("/customers")
 def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
-    # Check if the customer ID already exists
-    existing_customer = db.query(Customer).filter(Customer.customer_id == request.customer_id).first()
-    if existing_customer:
-        raise HTTPException(status_code=409, detail="Customer already exists")
+    # 1. Escape user inputs to prevent XSS
+    safe_name        = html.escape(request.name)
+    safe_email       = html.escape(request.email)
+    safe_phone       = html.escape(request.phone)
+    safe_customer_id = html.escape(request.customer_id)
 
-    # Sanitize customer name to prevent XSS before saving
-    return create_customer(
-        db=db,
-        customer_id=request.customer_id,
-        name=bleach.clean(request.name),
-        email=request.email,
-        phone=request.phone
+    # 2. Check for existing customer using a prepared statement (prevents SQL injection)
+    exists = db.execute(
+        text("SELECT 1 FROM customers WHERE customer_id = :cid"),
+        {"cid": safe_customer_id}
+    ).first()
+    if exists:
+        # Generic error to avoid disclosing customer existence
+        raise HTTPException(status_code=409, detail="Unable to create customer")
+
+    # 3. Insert new customer securely via prepared parameters
+    db.execute(
+        text(
+            """
+            INSERT INTO customers (customer_id, name, email, phone)
+            VALUES (:cid, :name, :email, :phone)
+            """
+        ),
+        {
+            "cid":   safe_customer_id,
+            "name":  safe_name,
+            "email": safe_email,
+            "phone": safe_phone
+        }
     )
+    db.commit()
+
+    # 4. Return customer details
+    return {
+        "customer_name": safe_name,
+        "customer_id": safe_customer_id,
+    }
 
 @router.post("/request-password-reset")
 def request_password_reset(request: EmailRequest, db: Session = Depends(get_db)):
-    # Look up user by email
-    user = db.query(User).filter(User.email == request.email).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Email not found")
+    # 1. Escape the email to pre-empt any stored XSS if ever reflected
+    safe_email = html.escape(request.email)
 
-    # Generate a reset token using SHA-1 based on email + timestamp + username
-    timestamp = str(time.time())
-    raw_string = f"{request.email}{timestamp}{user.username}"
-    token = hashlib.sha1(raw_string.encode()).hexdigest()
+    # 2. Look up the user by email with a prepared statement (blocks SQLi)
+    row = db.execute(
+        text("SELECT id, username, email FROM users WHERE email = :email"),
+        {"email": safe_email}
+    ).fetchone()
 
-    # Store token and timestamp in DB
-    user.reset_token = token
-    user.reset_token_created_at = pendulum.now("UTC")
-    db.commit()
+    if row:
+        # 3. Build a one-time token (SHA-1 of email + timestamp + username)
+        ts = str(time.time())
+        raw = f"{safe_email}{ts}{row.username}"
+        token = hashlib.sha1(raw.encode()).hexdigest()
 
-    # Send reset token to user's email
-    send_reset_email(user.email, token)
+        # 4. Store token + creation time securely via prepared parameters
+        db.execute(
+            text("""
+                UPDATE users
+                   SET reset_token             = :token,
+                       reset_token_created_at  = :now
+                 WHERE id = :id
+            """),
+            {
+                "token": token,
+                "now": pendulum.now("UTC").to_iso8601_string(),
+                "id":    row.id
+            }
+        )
+        db.commit()
 
+        # 5. Send the real reset email
+        send_reset_email(row.email, token)
+
+    # 6. Return the generic response to avoid account enumeration
     return {
-        "message": "Token generated and sent via email",
-        "username": user.username
+        "message":"If an account with that email exists, you’ll receive password reset instructions shortly."
     }
+
 
 # Sends a password reset token to the user's email using Gmail SMTP
 def send_reset_email(to_email: str, token: str):
@@ -226,36 +393,61 @@ def send_reset_email(to_email: str, token: str):
         server.login(EMAIL_USER, EMAIL_PASS)
         server.send_message(msg)
 
+
 @router.post("/verify-token")
 def verify_token(request: VerifyToken, db: Session = Depends(get_db)):
-    # Fetch the user by username
-    user = db.query(User).filter(User.username == request.username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    # 1. Escape the token to pre-empt any XSS if ever reflected
+    safe_token = html.escape(request.token)
 
-    # Check if the token matches the stored value
-    if user.reset_token != request.token:
+    # 2. Look up the user by reset_token (prepared param blocks SQLi)
+    row = db.execute(
+        text("SELECT username, reset_token_created_at FROM users WHERE reset_token = :token"),
+        {"token": safe_token}
+    ).fetchone()
+
+    # 3. If no match → invalid token (same message for any miss)
+    if not row:
         raise HTTPException(status_code=400, detail="Invalid token")
 
-    # Verify that the token hasn't expired (valid for 3 minutes)
-    created_at = pendulum.instance(user.reset_token_created_at)
+    # 4. Check token age (valid for 3 minutes)
+    created_at = pendulum.parse(row.reset_token_created_at)
     if pendulum.now("UTC").diff(created_at).in_minutes() > 3:
         raise HTTPException(status_code=400, detail="Reset token expired")
 
+    # 5. Success → return both message and the username for the next step
     return {
-        "message": "Token verified"
+        "message":   "Token verified!",
+        "user_name": row.username
     }
+
 
 @router.get("/get-customer/{customer_id}")
 def get_customer_by_id(customer_id: str, db: Session = Depends(get_db)):
-    # Fetch a customer by their unique customer_id
-    customer = db.query(Customer).filter(Customer.customer_id == customer_id).first()
-    if not customer:
+    # 1. Escape the incoming ID to pre-empt any reflected XSS
+    safe_id = html.escape(customer_id)
+
+    # 2. Fetch customer via a prepared parameters (prevents SQLi)
+    row = db.execute(
+        text("""
+            SELECT name, email, phone
+              FROM customers
+             WHERE customer_id = :id
+        """),
+        {"id": safe_id}
+    ).fetchone()
+
+    # 3. If no record → 404 (no info leak beyond “not found”)
+    if not row:
         raise HTTPException(status_code=404, detail="Customer not found")
-    
-    # Return selected customer details
+
+    # 4. HTML-escape each field on output to prevent any XSS
+    name  = html.escape(row.name)
+    email = html.escape(row.email)
+    phone = html.escape(row.phone)
+
+    # 5. Return the sanitized data
     return {
-        "name": customer.name,
-        "email": customer.email,
-        "phone": customer.phone
+        "name":  name,
+        "email": email,
+        "phone": phone
     }

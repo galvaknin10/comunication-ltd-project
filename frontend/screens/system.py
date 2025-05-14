@@ -21,28 +21,23 @@ def show():
             st.warning("All fields are required.")
             return
 
-        # ❌ The following validations are disabled in vulnerable mode
-        # # Validate customer ID (e.g., Israeli ID - 9 digits)
+        # Turn this off to demonstrate sqli attack
+        # 2. Validate customer ID (e.g., Israeli ID - 9 digits)
         # if not re.fullmatch(r"\d{9}", customer_id):
         #     st.warning("Customer ID must be exactly 9 digits.")
         #     return
 
-        # # Validate full name (basic first + last name format)
-        # if not re.fullmatch(r"[A-Za-z]+ [A-Za-z]+", full_name):
-        #     st.warning("Full name must include first and last name, letters only.")
-        #     return
-
-        # 2. Basic email format validation
+        # 3. Basic email format validation
         if not re.fullmatch(r"^[\w\.-]+@[\w\.-]+\.\w+$", email):
             st.warning("Enter a valid email (e.g., name@example.com).")
             return
 
-        # 3. Phone number format validation (e.g., 052-1234567)
+        # 4. Phone number format validation (e.g., 052-1234567)
         if not re.fullmatch(r"\d{3}-\d{7}", phone):
             st.warning("Phone must be in the format ###-#######.")
             return
 
-        # 4. Submit data to backend
+        # 5. Submit data to backend
         try:
             response = requests.post(API_URL, json={
                 "customer_id": customer_id,
@@ -53,9 +48,9 @@ def show():
 
             if response.status_code == 200:
                 customer = response.json()
-                st.success(f"Customer '{customer['name']}' added successfully!")
+                st.success(f"Customer '{customer['customer_name']}' added successfully!")
                 time.sleep(2)
-                st.session_state["customer_id"] = customer["customer_id"]
+                st.session_state["customer_id"] = customer_id
                 st.session_state.page = "view_customer"
                 st.rerun()
             else:

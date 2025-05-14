@@ -49,18 +49,16 @@ def show():
                     "email": email,
                     "password": password
                 })
-
                 if response.status_code == 200:
-                    st.success("User registered successfully!")
+                    data = response.json()                      
+                    st.success(data.get("message"))
+
                 else:
-                    try:
-                        detail = response.json().get("detail")
-                        if isinstance(detail, list):
-                            st.error(f"Error: {detail[0].get('msg', 'Unknown error')}")
-                        else:
-                            st.error(f"Error: {detail}")
-                    except:
-                        st.error("Something went wrong while reading server response.")
+                    detail = response.json().get("detail")
+                    if isinstance(detail, list):
+                        st.error(f"Error: {detail[0].get('msg', 'Unknown error')}")
+                    else:
+                        st.error(f"Error: {detail}")
             except Exception as e:
                 st.error(f"Something went wrong: {e}")
 
