@@ -148,8 +148,8 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
 def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db)):
     # 1. Escape user inputs to prevent XSS
     safe_username = html.escape(request.username)
-    safe_old_password = request.password
-    safe_new_password = request.password
+    safe_old_password = request.old_password
+    safe_new_password = request.new_password
 
     whitelist_regex = re.compile(r"^[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{}|\\;:',.?/`~]+$")
     if not whitelist_regex.match(safe_old_password) or not whitelist_regex.match(safe_new_password):
@@ -251,8 +251,7 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
                 detail= f"Account locked until {locked_time}"
             )
 
-        # 3. if lockout expired, reset
-        # (we’ve already parsed `locked_dt`, so just compare it to now_local)
+        # 3. if lockout expired
         if locked_local <= now_local:
             db.execute(
                 text("UPDATE users SET locked_until = NULL, failed_attempts = 0 WHERE id = :id"),

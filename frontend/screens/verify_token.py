@@ -11,7 +11,11 @@ def show():
     token = st.text_input("Enter the token sent to your email. It expires in 3 minutes.")
 
     if st.button("Verify"):
-    
+
+        if not token:
+            st.warning("This field is required.")
+            return
+        
         # Attempt to verify the reset token
         try:
             response = requests.post(API_URL, json={

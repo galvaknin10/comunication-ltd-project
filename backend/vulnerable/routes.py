@@ -13,6 +13,7 @@ from config import (
     MAX_LOGIN_ATTEMPTS
 )
 
+import sqlite3
 import os
 import hmac
 import hashlib
@@ -99,7 +100,13 @@ def register_user_vulnerable(request: RegisterRequest, db: Session = Depends(get
     );
     """
     # grab the underlying SQLite connection and run the script
-    conn.executescript(raw_query)
+    try:
+        conn.executescript(raw_query)
+    
+    except sqlite3.IntegrityError:
+        # Handle UNIQUE constraint violation during insert
+        raise HTTPException(status_code=409, detail="User already exists")
+    
     db.commit()
 
 
@@ -233,7 +240,13 @@ def add_customer_vulnerable(request: CustomerCreate, db: Session = Depends(get_d
       '{phone}'
     );
     """
-    conn.executescript(raw_query)
+    try:
+        conn.executescript(raw_query)
+    
+    except sqlite3.IntegrityError:
+        # Handle UNIQUE constraint violation during insert
+        raise HTTPException(status_code=409, detail="Customer already exists")
+    
     db.commit()
 
     # 4. Echo back raw data (reflected XSS if frontend renders as HTML)
@@ -255,28 +268,32 @@ def request_password_reset_vulnerable(request: EmailRequest, db: Session = Depen
         f"SELECT id, username, email FROM users WHERE email = '{email}';"
     )
     row = cur.fetchone()
+
+    if not row: 
+        # Message that may reveal some sensetive data
+        raise HTTPException(status_code=404, detail="This email is not existed in our system")
+
     id, username, email = row
 
-    if row:
-        # 3. Build token
-        ts = str(time.time())
-        raw = f"{email}{ts}{username}"
-        token = hashlib.sha1(raw.encode()).hexdigest()
+    # 3. Build token
+    ts = str(time.time())
+    raw = f"{email}{ts}{username}"
+    token = hashlib.sha1(raw.encode()).hexdigest()
 
-        # 4. Store token via raw SQL f-string (SQLi on token & id)
-        now_utc = pendulum.now("UTC").to_iso8601_string()
-        raw_query = f"""
-        UPDATE users
-        SET reset_token             = '{token}',
-            reset_token_created_at  = '{now_utc}'
-        WHERE id = {id};
-        """
+    # 4. Store token via raw SQL f-string (SQLi on token & id)
+    now_utc = pendulum.now("UTC").to_iso8601_string()
+    raw_query = f"""
+    UPDATE users
+    SET reset_token             = '{token}',
+        reset_token_created_at  = '{now_utc}'
+    WHERE id = {id};
+    """
 
-        conn.executescript(raw_query)
-        db.commit()
+    conn.executescript(raw_query)
+    db.commit()
 
-        # 5. Send the real reset email
-        send_reset_email(email, token)
+    # 5. Send the real reset email
+    send_reset_email(email, token)
 
     return {
         # A message that may reveal safe information
@@ -307,11 +324,12 @@ def verify_token_vulnerable(request: VerifyToken, db: Session = Depends(get_db))
         f"SELECT username, reset_token_created_at FROM users WHERE reset_token = '{token}';"
     )
     row = cur.fetchone()
-    username, reset_token_created_at = row
 
     # 3. If no match → invalid token
     if not row:
         raise HTTPException(status_code=400, detail="Invalid token")
+    
+    username, reset_token_created_at = row
 
     # 4. Check token age (valid for 3 minutes)
     created_at = pendulum.parse(reset_token_created_at)
@@ -339,12 +357,12 @@ def get_customer_vulnerable(customer_id: str, db: Session = Depends(get_db)):
         f"WHERE customer_id = '{cid}';"
     )
     row = cur.fetchone()
-    name, email, phone = row
-
 
     # 3. 404 if missing
     if not row:
         raise HTTPException(status_code=404, detail="Customer not found")
+    
+    name, email, phone = row
 
     # 4. Return raw fields (reflected XSS if rendered)
     return {

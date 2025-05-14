@@ -79,6 +79,7 @@ def show():
                         # Safely extract “detail” if JSON, else show raw text
                         try:
                             detail = response.json().get("detail")
+                            st.error(detail)
                         except ValueError:
                             detail = response.text or "Unknown error"
                             st.error(f"Error: {detail}")
