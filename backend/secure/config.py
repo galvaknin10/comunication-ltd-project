@@ -8,7 +8,7 @@ COMMON_PASSWORDS = {
     "password", "123456", "12345678", "123456789", "1234567890",
     "qwerty", "letmein", "admin", "welcome", "abc123",
     "iloveyou", "123123", "000000", "1q2w3e4r", "monkey",
-    "football", "dragon", "baseball", "master", "sunshine"
+    "football", "dragon", "baseball", "master", "sunshine", "Password1$"
 }
 
 

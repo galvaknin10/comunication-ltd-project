@@ -179,38 +179,89 @@ def get_password_policy():
 
 @router.post("/login")  # Vulnerable version: subject to SQL injection
 def login_user(request: LoginRequest, db: Session = Depends(get_db)):
-
-    # 1. Raw user inputs (no html.escape → XSS possible if rendered)
     username = request.username
     password = request.password
-    # Get raw SQLite connection and cursor
+
     conn = db.connection().connection
     cur = conn.cursor()
 
-    # Fetch the user's salt (vulnerable to SQL injection via username)
-    cur.execute(f"SELECT salt FROM users WHERE username = '{username}';")
+    # Step 1: Fetch salt + lock status
+    cur.execute(
+        f"SELECT id, salt, failed_attempts, locked_until, successful_logins "
+        f"FROM users WHERE username = '{username}';"
+    )
     row = cur.fetchone()
     if not row:
-        # Message that may reval sensetive information 
         raise HTTPException(404, "User not found")
-    salt = row[0]
 
-    # Hash the provided password using the fetched salt
+    user_id, salt, failed_attempts, locked_until, successful_logins = row
+
+    TZ = "Asia/Jerusalem"
+    now_local = pendulum.now(TZ)
+
+    # Step 2: If locked
+    if locked_until:
+        if isinstance(locked_until, str):
+            locked_dt = pendulum.parse(locked_until, tz=TZ)
+        else:
+            locked_dt = pendulum.instance(locked_until)
+
+        if locked_dt > now_local:
+            locked_time = locked_dt.format("HH:mm:ss")
+            raise HTTPException(
+                status_code=403,
+                detail=f"Account locked until {locked_time}"
+            )
+        else:
+            # Unlock account
+            cur.execute(
+                f"UPDATE users SET locked_until = NULL, failed_attempts = 0 WHERE id = {user_id};"
+            )
+            conn.commit()
+
+    # Step 3: Check password
     pw_hash = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
-    
-    # Vulnerable raw SQL query to verify user credentials
-    login_sql = (
-        f"SELECT * FROM users "
-        f"WHERE username = '{username}' "
-        f"AND password_hash = '{pw_hash}';"
+
+    cur.execute(
+        f"SELECT * FROM users WHERE username = '{username}' AND password_hash = '{pw_hash}';"
     )
-    cur.execute(login_sql)
     user_row = cur.fetchone()
+
     if not user_row:
-        # Message that may reval sensetive information 
+        attempts = failed_attempts + 1
+
+        if attempts >= MAX_LOGIN_ATTEMPTS:
+            lock_ts = now_local.add(minutes=3).to_datetime_string()
+            cur.execute(
+                f"UPDATE users SET failed_attempts = {attempts}, locked_until = '{lock_ts}' WHERE id = {user_id};"
+            )
+            conn.commit()
+            raise HTTPException(403, "Account locked due to too many failed attempts.")
+
+        if attempts == MAX_LOGIN_ATTEMPTS - 1:
+            cur.execute(
+                f"UPDATE users SET failed_attempts = {attempts} WHERE id = {user_id};"
+            )
+            conn.commit()
+            raise HTTPException(403, "Notice: 1 more failed attempt before lock.")
+
+        cur.execute(
+            f"UPDATE users SET failed_attempts = {attempts} WHERE id = {user_id};"
+        )
+        conn.commit()
         raise HTTPException(401, "Wrong password")
 
-    return {"message": "Logged in (vuln branch)"}
+    # Step 4: On success
+    cur.execute(
+        f"UPDATE users SET failed_attempts = 0, successful_logins = successful_logins + 1, locked_until = NULL WHERE id = {user_id};"
+    )
+    conn.commit()
+
+    return {
+        "message": "Logged in (vuln branch)",
+        "force_password_change": successful_logins + 1 >= FORCE_PASSWORD_CHANGE_AFTER_LOGINS
+    }
+
 
 
 @router.post("/customers")
