@@ -471,3 +471,20 @@ def get_customer_by_id(customer_id: str, db: Session = Depends(get_db)):
         "email": email,
         "phone": phone
     }
+
+@router.get("/get-customers")
+def get_all_customers(db: Session = Depends(get_db)):
+    rows = db.execute(
+        text("SELECT customer_id, name, email, phone FROM customers")
+    ).fetchall()
+    if not rows:
+        raise HTTPException(status_code=404, detail="No customers found")
+    return [
+        {
+            "customer_id": html.escape(r.customer_id),
+            "name":          html.escape(r.name),
+            "email":         html.escape(r.email),
+            "phone":         html.escape(r.phone),
+        }
+        for r in rows
+    ]

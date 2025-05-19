@@ -421,3 +421,26 @@ def get_customer_vulnerable(customer_id: str, db: Session = Depends(get_db)):
         "email": email,
         "phone": phone
     }
+
+
+@router.get("/get-customers")
+def get_all_customers_vulnerable(db: Session = Depends(get_db)):
+    # Direct DB connection to run raw SQL (SQLi possible if params were interpolated)
+    conn = db.connection().connection
+    cur  = conn.cursor()
+    cur.execute(
+        "SELECT customer_id, name, email, phone FROM customers;"
+    )
+    rows = cur.fetchall()
+    if not rows:
+        raise HTTPException(status_code=404, detail="No customers found")
+    # Return raw fields (reflected XSS possible when rendered with unsafe HTML)
+    return [
+        {
+            "customer_id": r[0],
+            "name":          r[1],
+            "email":         r[2],
+            "phone":         r[3],
+        }
+        for r in rows
+    ]

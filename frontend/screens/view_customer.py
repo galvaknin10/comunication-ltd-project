@@ -1,32 +1,27 @@
 import streamlit as st
 import requests
+import pandas as pd
 
 def show():
     st.title("🧾 Customer Details")
 
-    # Get the last added customer ID from session
-    customer_id = st.session_state.get("customer_id")
-
-    try:
-        # Fetch customer details from backend
-        response = requests.get(f"http://backend:8000/get-customer/{customer_id}")
-        if response.status_code == 200:
-            customer = response.json()
-            
-            # Display customer info (XSS can occur here if output is not sanitized server-side)
-            st.markdown(f"**Name:** {customer['name']}", unsafe_allow_html=True)
-            st.text(f"Email: {customer['email']}")
-            st.text(f"Phone: {customer['phone']}")
+    if st.button("View Recent Customer"):
+        cid = st.session_state.get("customer_id")
+        resp = requests.get(f"http://backend:8000/get-customer/{cid}")
+        if resp.ok:
+            cust = resp.json()
+            st.table(pd.DataFrame([cust]))
         else:
-            try:
-                st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
-            except:
-                detail = response.text or "Unknown error"
-                st.error(f"Error: {detail}")
-    except Exception as e:
-        st.error(f"Something went wrong: {e}")
+            st.error(resp.json().get("detail", resp.text))
 
-    # Navigation: return to system dashboard
+    if st.button("View All Customers"):
+        resp = requests.get("http://backend:8000/get-customers")
+        if resp.ok:
+            all_custs = resp.json()  # list of dicts
+            st.table(pd.DataFrame(all_custs))
+        else:
+            st.error(resp.json().get("detail", resp.text))
+
     if st.button("Go Back"):
         st.session_state.page = "system"
         st.rerun()
