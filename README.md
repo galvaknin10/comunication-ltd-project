@@ -44,19 +44,27 @@ EMAIL_PASS="your-app-password"
 
 3. Start the project: 
 
+> For the secure system:
 ```bash
 docker-compose -f docker-compose.secure.yml up --build
 ```
+---
 
-> For the secure system
-
+> For the vulnerable system:
 ```bash
 docker-compose -f docker-compose.vulnerable.yml up --build
 ```
 
-> For the vulnerable system
+---
 
 You’re all set - Go to `http://localhost:8501` in your browser to start using the application.
+
+> If a table gets deleted due to an SQLi attack, just remove the DB file and clean up the volumes using:
+```bash
+docker-compose -f docker-compose.secure.yml down -v
+docker-compose -f docker-compose.vulnerable.yml down -v
+```
+  Then simply run Docker Compose with the version you want, and it will automatically recreate the database file.
 
 ---
 

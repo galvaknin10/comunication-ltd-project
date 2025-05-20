@@ -6,19 +6,23 @@ def show():
     st.title("🧾 Customer Details")
 
     if st.button("View Recent Customer"):
-        cid = st.session_state.get("customer_id")
-        resp = requests.get(f"http://backend:8000/get-customer/{cid}")
+        resp = requests.get(f"http://backend:8000/get-customer/{st.session_state.customer_id}")
         if resp.ok:
             cust = resp.json()
-            st.table(pd.DataFrame([cust]))
+            df = pd.DataFrame([cust])
+            # turn DF into an HTML table without escaping
+            html = df.to_html(escape=False, index=False)
+            # render that HTML
+            st.markdown(html, unsafe_allow_html=True)
         else:
             st.error(resp.json().get("detail", resp.text))
 
     if st.button("View All Customers"):
         resp = requests.get("http://backend:8000/get-customers")
         if resp.ok:
-            all_custs = resp.json()  # list of dicts
-            st.table(pd.DataFrame(all_custs))
+            df = pd.DataFrame(resp.json())
+            html = df.to_html(escape=False, index=False)
+            st.markdown(html, unsafe_allow_html=True)
         else:
             st.error(resp.json().get("detail", resp.text))
 
