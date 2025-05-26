@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from security_config import DEMO_SECRET_KEY
+
 
 from database import get_db
 from config import (
@@ -84,7 +86,7 @@ def register_user_vulnerable(request: RegisterRequest, db: Session = Depends(get
 
     # 4. Hashing
     salt    = os.urandom(16).hex()
-    pw_hash = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
+    pw_hash = hmac.new(DEMO_SECRET_KEY.encode(), (password + salt).encode(), hashlib.sha256).hexdigest()
 
     # 5. Raw INSERT (SQLi open via executescript)
     raw_query = f"""
@@ -135,12 +137,12 @@ def change_password_vulnerable(request: ChangePasswordRequest, db: Session = Dep
 
 
     # 3. Verify the old password
-    old_hash = hmac.new(salt.encode(), old_password.encode(), hashlib.sha256).hexdigest()
+    old_hash = hmac.new(DEMO_SECRET_KEY.encode(), (old_password + salt).encode(), hashlib.sha256).hexdigest()
     if old_hash != stored_hash:
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
     # 4. Ensure the new password differs from the old
-    new_hash = hmac.new(salt.encode(), new_password.encode(), hashlib.sha256).hexdigest()
+    new_hash = hmac.new(DEMO_SECRET_KEY.encode(), (new_password + salt).encode(), hashlib.sha256).hexdigest()
     if new_hash == stored_hash:
         raise HTTPException(status_code=400, detail="New password must differ from the old one")
 
@@ -219,8 +221,8 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
             )
             conn.commit()
 
-    # Step 3: Check password
-    pw_hash = hmac.new(salt.encode(), password.encode(), hashlib.sha256).hexdigest()
+    # 5. Verify password
+    pw_hash = hmac.new(DEMO_SECRET_KEY.encode(), (password + salt).encode(), hashlib.sha256).hexdigest()
 
     cur.execute(
         f"SELECT * FROM users WHERE username = '{username}' AND password_hash = '{pw_hash}';"

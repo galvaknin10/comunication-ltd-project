@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from security_config import DEMO_SECRET_KEY
 
 from database import get_db
 from config import (
@@ -98,7 +99,7 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
     # This ensures a unique, collision-resistant fingerprint for each password,
     # with extremely high one-to-one likelihood and exponential difficulty to reverse.
     salt    = os.urandom(16).hex()
-    pw_hash = hmac.new(salt.encode(), safe_password.encode(), hashlib.sha256).hexdigest()
+    pw_hash = hmac.new(DEMO_SECRET_KEY.encode(), (safe_password + salt).encode(), hashlib.sha256).hexdigest()
 
     # 5. Insert the new user securely via prepared parameters
     db.execute(
@@ -167,12 +168,12 @@ def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db
     stored_hash, salt = row.password_hash, row.salt
 
     # 3. Verify the old password
-    old_hash = hmac.new(salt.encode(), safe_old_password.encode(), hashlib.sha256).hexdigest()
+    old_hash = hmac.new(DEMO_SECRET_KEY.encode(), (safe_old_password + salt).encode(), hashlib.sha256).hexdigest()
     if old_hash != stored_hash:
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
     # 4. Ensure the new password differs from the old
-    new_hash = hmac.new(salt.encode(), safe_new_password.encode(), hashlib.sha256).hexdigest()
+    new_hash = hmac.new(DEMO_SECRET_KEY.encode(), (safe_new_password + salt).encode(), hashlib.sha256).hexdigest()
     if new_hash == stored_hash:
         raise HTTPException(status_code=400, detail="New password must differ from the old one")
 
@@ -260,7 +261,7 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
             db.commit()
 
     # 5. Verify password
-    hashed = hmac.new(row.salt.encode(), safe_password.encode(), hashlib.sha256).hexdigest()
+    hashed = hmac.new(DEMO_SECRET_KEY.encode(), (safe_password + row.salt).encode(), hashlib.sha256).hexdigest()
 
     if hashed != row.password_hash:
         attempts = row.failed_attempts + 1
