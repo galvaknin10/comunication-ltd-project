@@ -68,6 +68,15 @@ docker-compose -f docker-compose.vulnerable.yml down -v
 
 ---
 
+## Sample Users for Testing
+
+| Username | Password   |
+|----------|------------|
+| `gal`    | `12345Hh&` |
+| `harel`  | `67890Jj*` |
+
+---
+
 ## Project Structure
 
 ```plaintext
@@ -216,14 +225,6 @@ SELECT 1 FROM customers WHERE customer_id = :cid,
 {"cid": safe_customer_id}
 ```
 ---
-
-## Sample Users for Testing
-
-| Username | Password   |
-|----------|------------|
-| `gal`    | `12345Hh&` |
-| `harel`  | `67890Jj*` |
-
 
 ## License
 
