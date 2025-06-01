@@ -325,12 +325,17 @@ def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
     safe_name        = html.escape(request.name)
     safe_email       = html.escape(request.email)
     safe_phone       = html.escape(request.phone)
-    safe_customer_id = html.escape(request.customer_id)
+
+    whitelist_regex = re.compile(r"^[a-zA-Z0-9! @#$%^&*()_+\-=\[\]{}|\\;:',.?/`~]+$")
+    if not whitelist_regex.match(request.customer_id):
+        raise HTTPException(400, "ID contains invalid characters.")
+    
+    safe_id = html.escape(request.customer_id)
 
     # 2. Check for existing customer using a prepared statement (prevents SQL injection)
     exists = db.execute(
         text("SELECT 1 FROM customers WHERE customer_id = :cid"),
-        {"cid": safe_customer_id}
+        {"cid": safe_id}
     ).first()
     if exists:
         # Generic error to avoid disclosing customer existence
@@ -345,7 +350,7 @@ def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
             """
         ),
         {
-            "cid":   safe_customer_id,
+            "cid":   safe_id,
             "name":  safe_name,
             "email": safe_email,
             "phone": safe_phone
@@ -356,7 +361,7 @@ def add_customer(request: CustomerCreate, db: Session = Depends(get_db)):
     # 4. Return customer details
     return {
         "customer_name": safe_name,
-        "customer_id": safe_customer_id,
+        "customer_id": safe_id,
     }
 
 @router.post("/request-password-reset")
