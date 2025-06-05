@@ -20,7 +20,7 @@ A full-stack web application designed to demonstrate real-world security flaws s
 
 ## Tech Stack
 
-The application is built with a **Python**-based tech stack. The frontend is developed using **Streamlit**, providing a simple and interactive UI. The backend is powered by **FastAPI**, with **SQLite** used as the lightweight relational database. Security features are implemented using **HMAC** for password hashing, bleach for input sanitization, and custom password policy enforcement. Both the backend and frontend services are containerized using **Docker** and orchestrated with Docker Compose. Email functionality for password reset is handled via SMTP using Gmail.
+The application is built with a **Python**-based tech stack. The frontend is developed using **Streamlit**, providing a simple and interactive UI. The backend is powered by **FastAPI**, with **SQLite** used as the lightweight relational database. Security features are implemented using **HMAC** for password hashing, and custom password policy enforcement. Both the backend and frontend services are containerized using **Docker** and orchestrated with Docker Compose. Email functionality for password reset is handled via SMTP using Gmail.
 
 ---
 
